@@ -1,3 +1,7 @@
+# ==============================================================================
+# .gitignore for Cora Citation Network Analysis Project
+# ==============================================================================
+
 # History files
 .Rhistory
 .Rapp.history
@@ -25,7 +29,7 @@
 vignettes/*.html
 vignettes/*.pdf
 
-# OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
+# OAuth2 token
 .httr-oauth
 
 # knitr and R markdown default cache directories
@@ -39,11 +43,56 @@ vignettes/*.pdf
 # R Environment Variables
 .Renviron
 
-# pkgdown site
-docs/
+# pkgdown site (original)
+# docs/  # Commented out - we use docs/ for documentation
 
 # translation temp files
 po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# ==============================================================================
+# PROJECT-SPECIFIC ADDITIONS
+# ==============================================================================
+
+# Data (NEVER commit raw data to Git)
+data/raw/*
+data/processed/*.rds
+data/processed/*.csv
+
+# Keep folder structure but not content
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Output files (optional: commit if you want to share results)
+output/figures/*.png
+output/figures/*.pdf
+output/tables/*.csv
+
+# Keep output folder structure
+!output/figures/.gitkeep
+!output/tables/.gitkeep
+
+# Rendered HTML notebooks (large files)
+notebooks/*.html
+
+# System files
+.DS_Store
+Thumbs.db
+*~
+
+# Backup files
+*.bak
+*.backup
+
+# ==============================================================================
+# EXCEPTIONS (files to KEEP)
+# ==============================================================================
+
+# Keep README files
+!README.md
+!*/README.md
+
+# Keep .gitkeep files (to preserve empty folder structure)
+!.gitkeep
