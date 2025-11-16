@@ -8,3 +8,314 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
+## Indice 
+
+   1 : Caricare le librerie e dati da usare
+   2 : Calcolo di tutte le metriche di centralità
+      * 2.1 : Degree centrality
+          - In-degree
+          - Out-degree
+      * 2.2 : Closness Centrality (inutile)
+      * 2.3 : Betweenness Centrality
+      * 2.4 : Eigenvector Centrality (inutile)
+      * 2.5 : Page Rank Centrality
+      * 2.6 : Katz Centrality
+   3 : Power 
+
+
+##  1 : Caricare le librerie e dati da usare
+
+```{r setup, include=FALSE}
+
+library(igraph)
+library(dplyr)
+library(tidygraph)
+#library(ggraph)
+library(ggplot2)
+
+```
+
+Caricamento dati dal notebook precedente
+
+```{r}
+
+dir_processed <- "../data/processed"
+
+graph <- readRDS(file.path(dir_processed, "graph.rds"))
+content_nodes <- readRDS(file.path(dir_processed, "content_nodes.rds"))
+edge_table_named <- readRDS(file.path(dir_processed, "edges.rds"))
+
+cat("Oggetti caricati correttamente\n")
+
+```
+
+## 2 : Calcolo di tutte le metriche di centralità
+
+  * Degre Centrality :
+
+    - In-degree Centrality
+    - Out-degree Centrality
+
+  * Closness Centrality
+  * Betweenness Centrality
+  * Eigenvector Centrality
+  * Page Rank Centrality
+  * Katz Centrality
+
+```{r}
+
+graph <- graph %>%
+  activate(nodes) %>%
+  mutate(
+    indegree = centrality_degree(mode = "in"),
+    outdegree = centrality_degree(mode = "out"),
+    pagerank = centrality_pagerank(),
+    closeness = centrality_closeness(),
+    betweenness = centrality_betweenness()
+  )
+```
+
+## 2.1 Degree centrality
+
+Il degree (grado) è il numero di archi incidenti a un nodo.
+Ho un grafo diretto, dunque ne avrò 2 tipi : 
+
+  - In-degree: numero di archi entranti (citazioni ricevute da un paper)
+
+  - Out-degree: numero di archi uscenti (citazioni fatte da un paper)
+
+
+Prendo i top 500 nodi più centrali considerando solo in-degree
+
+```{r}
+
+top_ids <- graph %>%
+  as_tibble() %>%
+  top_n(500, indegree) %>%
+  pull(name)
+
+subgraph_top <- graph %>%
+  activate(nodes) %>%
+  filter(name %in% top_ids)
+
+
+```
+
+Visualizzazione della rete considerando In-degree
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+set.seed(42)
+
+ggraph(subgraph_top, layout = "fr") +
+  geom_edge_link(alpha = 0.2, edge_colour = "gray60") +
+  geom_node_point(aes(color = category, size = indegree), alpha = 0.85) +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = "Sottorete dei 500 paper più centrali",
+    subtitle = "Centralità = in-degree + out-degree",
+    size = "In-Degree Centrality",
+    color = "Category"
+  ) +
+  theme_void() +
+  theme(legend.position = "right")
+
+
+```
+
+## 2.2 : Closeness centrality
+
+La closeness indica quanto un nodo si trova “vicino” a tutti gli altri, cioè l’inverso della distanza media (numero di passi minimi) dagli altri nodi raggiungibili.
+
+Un paper con closeness alta è raggiungibile facilmente dagli altri e potenzialmente è un “crocevia” di informazioni
+
+
+Ho però che la mia rete è "non fortemente connessa”, infatti la struttura delle citazioni è molto asimmetrica e “sparsa”.
+
+In questi casi la closeness perde di informatività.
+ 
+Infatti è molto informativa solo per reti fortemente connesse, mentre in reti grandi e dirette ho che molte distanze sono infinite.
+
+
+Elenco i top 500 paper per Closeness
+
+```{r}
+
+
+# Estrai i top 10 paper per closeness centrality
+top_closeness <- graph %>%
+  as_tibble() %>%
+  arrange(desc(closeness)) %>%
+  select(name, closeness, category) %>%
+  head(500)
+
+print(top_closeness)
+
+
+# Estraggo i nodi con closeness più alta
+top_ids_closeness <- graph %>%
+  as_tibble() %>%
+  top_n(500, closeness) %>%
+  pull(name)
+
+# Creo la sottorete sui nodi con closeness più alta
+subgraph_closeness <- graph %>%
+  activate(nodes) %>%
+  filter(name %in% top_ids_closeness)
+
+```
+
+
+
+## 2.3 : Betweenness centrality
+
+La betweenness misura quante volte un nodo appare nei cammini minimi tra altri nodi. Rileva i “ponti” critici della rete.
+
+Elenco i top 10 paper per Betweenness
+
+High betweenness = ruolo di ponte/intermediazione.
+
+
+Prendo i Top 10 paper per Betweenness, mostro la tabella ed il grafo a barre.
+
+```{r}
+top_betw <- graph %>%
+  as_tibble() %>%
+  arrange(desc(betweenness)) %>%
+  select(name, betweenness, category) %>%
+  head(10)
+
+print(top_betw)
+
+
+ggplot(top_betw, aes(x = reorder(name, betweenness), y = betweenness, fill = category)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Top 10 paper per Betweenness",
+    x = "Paper ID",
+    y = "Betweenness"
+  )
+```
+
+Distribuzione della Betweenness centrality e Distribuzione della Betweenness centrality per categoria
+
+```{r}
+
+# Distribuzione della Betweenness centrality
+
+graph %>%
+  as_tibble() %>%
+  ggplot(aes(betweenness)) +
+  geom_histogram(bins = 60, fill = "steelblue", color = "gray20", alpha = 0.75) +
+  labs(
+    title = "Distribuzione della Betweenness centrality",
+    x = "Betweenness",
+    y = "Numero di paper"
+  )
+
+
+#Distribuzione Betweenness per categoria
+
+graph %>%
+  as_tibble() %>%
+  ggplot(aes(x = category, y = betweenness, fill = category)) +
+  geom_boxplot(show.legend = FALSE, outlier.size=0.5) +
+  labs(
+    title = "Distribuzione Betweenness per categoria",
+    x = "Categoria",
+    y = "Betweenness"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## 2.4 Eigenvector Centrality
+
+A practical problem with eigenvector centrality is that it works well only if the graph is (strongly) connected
+
+Le Directed real networks, come quella che qui stiamo considerano, non hanno tali caratteristiche.
+
+If a directed network is not strongly connected, then only vertices that are in strongly connected components of at least two nodes or in the out-component of such components can have non-zero eigenvector centrality
+
+## 2.5 Page Rank
+
+Prendo i top 10 paper per Page Rank
+
+```{r}
+
+top_pagerank <- graph %>%
+  as_tibble() %>%
+  arrange(desc(pagerank)) %>%
+  select(name, pagerank, category) %>%
+  head(10)
+
+print(top_pagerank)
+
+```
+
+Stampo un grafico a barre che mostra le stesse informazioni.
+Poi mostro la distribuzione Globale del PageRank.
+
+```{r}
+
+ggplot(top_pagerank, aes(x = reorder(name, pagerank), y = pagerank, fill = category)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Top 10 paper per PageRank",
+    x = "Paper ID",
+    y = "PageRank",
+    fill = "Categoria ML"
+  ) +
+  scale_fill_brewer(palette = "Set2")
+
+# Distribuzione Globale del PageRank
+graph %>%
+  as_tibble() %>%
+  ggplot(aes(pagerank)) +
+  geom_histogram(bins = 60, fill = "steelblue", color = "gray20", alpha = 0.75) +
+  labs(
+    title = "Distribuzione del PageRank",
+    x = "PageRank",
+    y = "Numero di paper"
+  )
+
+```
+
+## 2.6 : Katz centrality
+
+Versione ricorsiva del degree, dove “essere vicino a nodi importanti” aumenta la centralità.
+
+Prendo i top 10 paper per Katz
+
+```{r}
+
+top_katz <- graph %>%
+  as_tibble() %>%
+  arrange(desc(katz)) %>%
+  select(name, katz, category) %>%
+  head(10)
+
+print(top_katz)
+
+```
+
+
+```{r}
+
+
+
+```
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```

@@ -16,9 +16,24 @@ Se non va, prova ad eseguirlo direttamente da terminale.
 source("../scripts/01_download_data.R")
 ```
 
-# 01_Network_Construction.Rmd: 
+# Indice : 01_Network_Construction.Rmd: 
 
-Lettura, costruzione grafo e salvataggio
+  1 : Caricare le librerie
+  2 : lettura e filtraggio di Nodi ed Edges
+  3 : Oggetto igraph
+  4 : Matrice di Adiacenza
+  5 : Visualizzazione Cora Citation Network
+  
+  Bonus : Panoramica della rete in base alla Degree Centrality
+  6 : Studio in-degree per ogni paper
+  7 : Studio out-degree per ogni paper
+  8 : Tabella numero di paper totale per ogni categoria
+  9 : Tabella di quanti paper citano tot paper
+  10 : Tabella citazioni totali intra-disciplinari per categoria
+
+  11 : Salvataggio oggetti per analisi successive
+
+##  1 : Caricare le librerie
 
 ```{r setup, include=FALSE}
 
@@ -27,14 +42,14 @@ library(tidygraph)
 library(igraph)
 library(ggraph)
 library(ggplot2)
-library(readr)
 
 ```
 
-Inizio costruzione network da Cora
+## 2 : lettura e filtraggio di Nodi ed Edges
+
+Inizio costruzione network da Cora.
 
 Tengo solo "paper_id" e l'ultima colonna "categoria" da cora.content
-
 
 ```{r}
 
@@ -44,13 +59,11 @@ cora_content_file <- file.path(data_raw_dir, "cora.content")
 cora_cites_file <- file.path(data_raw_dir, "cora.cites")
 
 
-# Usa read.table con argomento fill = TRUE e separatore = ""
-content_df <- read.table(cora_content_file, header = FALSE, stringsAsFactors = FALSE, fill = TRUE)
 
-# La categoria è sempre l'ultima colonna
+# --- Lettura nodi (content_nodes) ---
+content_df <- read.table(cora_content_file, header = FALSE, stringsAsFactors = FALSE, fill = TRUE)
 category_col <- ncol(content_df)
 
-# Estrai solo ID e categoria
 content_nodes <- data.frame(
   paper_id = content_df[, 1],
   category = content_df[, category_col],
@@ -58,123 +71,255 @@ content_nodes <- data.frame(
 )
 
 cat("Letti paper:", nrow(content_nodes), "\n")
-cat("Categorie:", unique(content_nodes$category), "\n")
+cat("Categorie:", unique(content_nodes$category), "\n\n")
 
 
-# Leggi cora.cites con read.table e separatore spazi multipli
+# --- Lettura edges (cites_df) ---
 cites_df <- read.table(cora_cites_file, header = FALSE, stringsAsFactors = FALSE)
-
-# Assegna nomi corretti manualmente
 colnames(cites_df) <- c("paper_cited", "paper_citing")
 
-cat("Letti archi citazioni:", nrow(cites_df), "\n")
-
-
-# --- Costruzione grafo con tidygraph ---
-
-# Costruiamo igraph da edges e nodi
-graph <- tbl_graph(nodes = content_nodes, edges = edges, directed = TRUE)
-
-cat("Grafo creato:\n")
-cat("  Nodi:", graph %>% activate(nodes) %>% as_tibble() %>% nrow(), "\n")
-cat("  Archi:", graph %>% activate(edges) %>% as_tibble() %>% nrow(), "\n")
-```
-
-Visualizzazione base con ggraph
-
-```{r}
-
-set.seed(123)
-ggraph(graph, layout = "fr") +
-  geom_edge_link(alpha = 0.2, color = "gray50") +
-  geom_node_point(aes(color = category), size = 3, alpha = 0.8) +
-  theme_graph() +
-  labs(title = "Cora Citation Network",
-       color = "Categoria paper")
-
-
-```
-
-Costruzione grafo orientato igraph
-
-```{r}
-
-nodes <- content_df %>%
-  select(paper_id, category)
 
 edges <- cites_df %>%
-  filter(paper_cited %in% nodes$paper_id & paper_citing %in% nodes$paper_id)
+  rename(from = paper_citing, to = paper_cited)
 
-g <- graph_from_data_frame(d = edges, vertices = nodes, directed = TRUE)
-
-cat("Nodi grafo:", vcount(g), "\n")
-cat("Archi grafo:", ecount(g), "\n")
+cat("Letti archi citazioni:", nrow(cites_df), "\n\n")
 
 ```
+## 3 : Oggetto igraph
 
-Costruzione matrice di citazioni normalizzata per categoria
+Ottengo il grafo igraph dal data frame.
+
+Nota che il parametro d sta per data frame degli archi (edges).
+
+Ho che d è un data frame dove le prime due colonne indicano la relazione di collegamento (arco) fra nodi, tipicamente chiamate from e to.
+
+Le righe rappresentano gli archi (una citazione da un paper a un altro).
+
+Altre colonne in d sarebbero possibili attributi degli archi (es. peso, tipo).
 
 ```{r}
 
-# Matrice 7x7 con conti di citazioni da categoria i a categoria j
-cats <- unique(nodes$category)
-n_cats <- length(cats)
+graph_igraph <- graph_from_data_frame(
+  d = edges,
+  vertices = content_nodes,
+  directed = TRUE
+)
 
-# Crea mappa id -> category
-cat_map <- setNames(nodes$category, nodes$paper_id)
-
-# Aggrega conteggi per coppie di categorie
-cat_count <- matrix(0, nrow = n_cats, ncol = n_cats)
-rownames(cat_count) <- cats
-colnames(cat_count) <- cats
-
-for (i in 1:nrow(edges)) {
-  from_cat <- cat_map[[as.character(edges$paper_citing[i])]]
-  to_cat <- cat_map[[as.character(edges$paper_cited[i])]]
-  if (!is.null(from_cat) && !is.null(to_cat)) {
-    cat_count[from_cat, to_cat] <- cat_count[from_cat, to_cat] + 1
-  }
-}
-
-# Normalizza righe in probabilità
-cat_prob <- sweep(cat_count, 1, rowSums(cat_count), FUN = "/")
-
-# --- Salvataggio oggetti per futuro uso ---
-
-dir_processed <- "data/processed"
-if (!dir.exists(dir_processed)) dir.create(dir_processed)
-
-saveRDS(g, file = file.path(dir_processed, "network.rds"))
-saveRDS(cat_prob, file = file.path(dir_processed, "citation_matrix.rds"))
-
-cat("Salvati grafo e matrice citazioni in data/processed\n")
+graph <- as_tbl_graph(graph_igraph)
 
 ```
 
+Stampe utili 
+
 ```{r}
 
+cat("Grafo creato:\n")
+cat("  Nodi:", vcount(graph), "\n")
+cat("  Archi:", ecount(graph), "\n\n")
+
+# Tabella nodi con ID e attributi dal grafo (pulita)
+node_table_named <- as_data_frame(graph, what = "vertices")
+print(head(node_table_named, 10))
+
+# Edge list con ID paper reali dai vertex attribute "name"
+edge_table_named <- as_data_frame(graph, what = "edges")
+head(edge_table_named, 10)
+
+```
+
+## 4 : Matrice di Adiacenza
+
+Ottengo la Matrice di Adiacenza mediante as_adjacency_matrix.
+
+```{r}
+
+# Calcolo la matrice di adiacenza (ho ID paper sulle righe e colonne)
+adj_matrix <- as_adjacency_matrix(graph_igraph, 
+                                  attr = NULL, 
+                                  type = "both", 
+                                  names = TRUE, 
+                                  sparse = FALSE)
+
+adj_matrix[1:10, 1:10]
+
+```
+## 5 : Visualizzazione Cora Citation Network
+
+I nodi in questo grafo sono posizionati in base al layout Fruchterman-Reingold ("fr"), che è un algoritmo di disposizione spaziale molto usato per la visualizzazione di reti complesse. 
+
+In questo layout:
+
+  - I nodi sono considerati come punti che si respingono tra loro (come cariche elettriche).
+
+  - Gli archi agiscono come molle che li tengono più vicini se sono collegati.
+
+  - I nodi strettamente collegati tendono a essere visivamente vicini, mentre i nodi periferici restano ai margini.
+
+```{r fig.width=18, fig.height=14, fig.align='center', warning=FALSE}
+
+set.seed(123)
+
+ggraph(graph, layout = "fr") +
+  geom_edge_link(alpha = 0.1, color = "gray50", 
+                 arrow = arrow(length = unit(1, 'mm'), type = "closed")) +
+  geom_node_point(aes(color = category), size = 2, alpha = 0.7) +
+  scale_color_brewer(palette = "Set2") +
+  theme_void() +  # Usa theme_void() invece di theme_graph()
+  theme(legend.position = "right",
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 10)) +
+  labs(title = "Cora Citation Network",
+       subtitle = "2,708 papers | 5,429 citations | 7 ML categories",
+       color = "Category")
+
+```
+
+Struttura globale
+
+Si osserva un cluster centrale molto denso: qui sono posizionati i paper con molte citazioni reciproche, in particolare quelli di discipline che interagiscono (probabilmente "Neural_Networks", "Probabilistic_Methods", ecc.).
+
+I nodi ai margini della rete rappresentano paper poco connessi (pochi archi entranti/ uscenti)
+
+Deunque vedere delle macchie dello stsso colore, significa che i paper di quella categoria citano paper della stessa categoria.
+
+Dove i colori sono più mescolati, si trovano paper che fanno ponte, citando e venendo citati da più categorie diverse.
+
+Ad esmpio il violetto (Probabilistic Methods) sembra esser mescolato al centro, dunque probabilmente è una categoria che possiamo vedere come interdisciplinare. 
+
+Lo vedremo più avanti per confrontare o sfatare questa ipotesi a prima vista. 
 
 
+## 6 : Studio in-degree per ogni paper
 
+Ottengo l'in-degree per ogni nodo, ossia il numero di volte che un paper è citato.
+
+
+```{r}
+
+in_deg <- degree(graph_igraph, mode = "in")
+
+cat("Massimo numero di citazioni ricevute da un paper:", max(in_deg), "\n")
+
+# Crea tabella con paper e corrispondente in-degree
+top_cited <- data.frame( paper_id = names(in_deg), indegree = as.numeric(in_deg)) %>%
+  arrange(desc(indegree)) %>%
+  head(10)  #
+
+print(top_cited)
+
+```
+
+Ne concludiamo che ogni paper riceve al massimo 5 citazioni. 
+Il dataset è fatto in tale modo.
+
+
+## 7 : Studio out-degree per ogni paper
+
+Ottengo l'out-degree per ogni nodo, ossia quante citazioni fa ogni paper.
+
+Vediamo anche il Massimo numero di citazioni fatte da un paper.
+
+```{r}
+
+out_deg <- degree(graph_igraph, mode = "out")
+
+# Paper con più citazioni fatte
+top_citers <- data.frame( paper_id = names(out_deg), outdegree = as.numeric(out_deg)) %>% 
+  arrange(desc(outdegree)) %>% 
+  head(10)
+
+print(top_citers)
 
 ```
 
 
+## 8 : Tabella numero di paper totale per ogni categoria
+
+Vediamo ora il numero di paper totale per ciascuna categoria.
+
 ```{r}
+
+category_table <- content_nodes %>%
+  group_by(category) %>%
+  summarise(numero_paper = n()) %>%
+  arrange(desc(numero_paper))
+
+print(category_table)
 
 ```
 
 
+## 9 : Tabella di quanti paper citano tot paper
+
+Vediamo quanto i paper sono propensi a citare altri articoli. 
+
+Mostiamo quindi quanti paper hanno un complessivo di 0 citazioni ad altri articoli, quanti 1 e così via.
+
 ```{r}
+
+# Tabella: quante paper fanno 0, 1, ... 5 citazioni (sono 6 possibili valori, da 0 a 5)
+outdeg_table <- as.data.frame(table(out_deg))
+colnames(outdeg_table) <- c("citazioni_fatte", "numero_paper")
+
+print(outdeg_table)
 
 ```
 
+## 10 : Tabella citazioni totali intra-disciplinari per categoria
+
+Numero di volte che un paper, di una certa categoria, cita un paper che sta nella stessa categoria.
 
 ```{r}
+
+# Controllo che paper_id sia di tipo character
+content_nodes2 <- content_nodes %>%
+  mutate(paper_id = as.character(paper_id))
+
+edges_with_cat <- edge_table_named %>%
+  left_join(content_nodes2, by = c("from" = "paper_id")) %>%
+  rename(from_cat = category) %>%
+  left_join(content_nodes2, by = c("to" = "paper_id")) %>%
+  rename(to_cat = category)
+
+# Calcolo citazioni intra-disciplinari (same category)
+num_intra <- edges_with_cat %>% 
+  filter(from_cat == to_cat) %>% 
+  nrow()
+
+# Calcolo le citazioni totali
+num_total <- nrow(edges_with_cat)
+
+# Calcolo della percentuale
+perc_intra <- 100 * num_intra / num_total
+
+cat("Citazioni intra-disciplinari:", num_intra, "\n")
+cat("Citazioni totali:", num_total, "\n")
+cat(sprintf("Percentuale citazioni intra-disciplinari: %.2f%%\n", perc_intra))
+
+
+
+# Ora calcolaro le autocitazioni
+intra_citations <- edges_with_cat %>%
+  filter(from_cat == to_cat) %>%
+  group_by(from_cat) %>%
+  summarise(citazioni_intra = n()) %>%
+  arrange(desc(citazioni_intra))
+
+print(intra_citations)
 
 ```
 
+## 11 : Salvataggio oggetti per analisi successive
 
 ```{r}
+dir_processed <- "../data/processed"
+if (!dir.exists(dir_processed)) 
+    dir.create(dir_processed, recursive = TRUE)
+
+saveRDS(graph, file.path(dir_processed, "graph.rds"))
+saveRDS(content_nodes, file.path(dir_processed, "content_nodes.rds"))
+saveRDS(edge_table_named, file.path(dir_processed, "edges.rds"))
+
+cat("Oggetti salvati in", dir_processed, "\n")
 
 ```
