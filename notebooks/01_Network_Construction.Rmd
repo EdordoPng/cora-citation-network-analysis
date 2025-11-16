@@ -13,7 +13,7 @@ Dopo aver creato le cartelle, prosegui a scaricare il file del progetto
 Se non va, prova ad eseguirlo direttamente da terminale.
 
 ```{r}
-source("scripts/01_download_data.R")
+source("../scripts/01_download_data.R")
 ```
 
 # 01_Network_Construction.Rmd: 
@@ -22,35 +22,76 @@ Lettura, costruzione grafo e salvataggio
 
 ```{r setup, include=FALSE}
 
-library(tidyverse)
+library(dplyr)
+library(tidygraph)
 library(igraph)
+library(ggraph)
+library(ggplot2)
+library(readr)
+
 ```
 
 Inizio costruzione network da Cora
 
+Tengo solo "paper_id" e l'ultima colonna "categoria" da cora.content
+
+
 ```{r}
 
 # Percorsi dati
-data_raw_dir <- "data/raw"
+data_raw_dir <- "../data/raw"
 cora_content_file <- file.path(data_raw_dir, "cora.content")
 cora_cites_file <- file.path(data_raw_dir, "cora.cites")
 
-# --- Lettura cora.content ---
-# File con: paper_id, 1434 feature binarie, 1 categoria
 
-content_df <- read_delim(cora_content_file, delim = "\t", col_names = FALSE, trim_ws = TRUE)
-colnames(content_df) <- c("paper_id", paste0("word", 1:1434), "category")
+# Usa read.table con argomento fill = TRUE e separatore = ""
+content_df <- read.table(cora_content_file, header = FALSE, stringsAsFactors = FALSE, fill = TRUE)
 
-cat("Letti paper:", nrow(content_df), "\n")
-cat("Categorie:", unique(content_df$category), "\n")
+# La categoria è sempre l'ultima colonna
+category_col <- ncol(content_df)
 
-# --- Lettura cora.cites ---
-# File con due colonne: [paper_cited, paper_citing]
+# Estrai solo ID e categoria
+content_nodes <- data.frame(
+  paper_id = content_df[, 1],
+  category = content_df[, category_col],
+  stringsAsFactors = FALSE
+)
 
-cites_df <- read_delim(cora_cites_file, delim = "\t", col_names = FALSE)
+cat("Letti paper:", nrow(content_nodes), "\n")
+cat("Categorie:", unique(content_nodes$category), "\n")
+
+
+# Leggi cora.cites con read.table e separatore spazi multipli
+cites_df <- read.table(cora_cites_file, header = FALSE, stringsAsFactors = FALSE)
+
+# Assegna nomi corretti manualmente
 colnames(cites_df) <- c("paper_cited", "paper_citing")
 
 cat("Letti archi citazioni:", nrow(cites_df), "\n")
+
+
+# --- Costruzione grafo con tidygraph ---
+
+# Costruiamo igraph da edges e nodi
+graph <- tbl_graph(nodes = content_nodes, edges = edges, directed = TRUE)
+
+cat("Grafo creato:\n")
+cat("  Nodi:", graph %>% activate(nodes) %>% as_tibble() %>% nrow(), "\n")
+cat("  Archi:", graph %>% activate(edges) %>% as_tibble() %>% nrow(), "\n")
+```
+
+Visualizzazione base con ggraph
+
+```{r}
+
+set.seed(123)
+ggraph(graph, layout = "fr") +
+  geom_edge_link(alpha = 0.2, color = "gray50") +
+  geom_node_point(aes(color = category), size = 3, alpha = 0.8) +
+  theme_graph() +
+  labs(title = "Cora Citation Network",
+       color = "Categoria paper")
+
 
 ```
 
@@ -111,6 +152,10 @@ cat("Salvati grafo e matrice citazioni in data/processed\n")
 ```
 
 ```{r}
+
+
+
+
 
 ```
 
