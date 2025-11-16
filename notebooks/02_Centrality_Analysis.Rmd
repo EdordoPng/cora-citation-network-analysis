@@ -20,7 +20,9 @@ knitr::opts_chunk$set(echo = TRUE)
       * 2.3 : Betweenness Centrality
       * 2.4 : Eigenvector Centrality (inutile)
       * 2.5 : Page Rank Centrality
-      * 2.6 : Katz Centrality
+      * 2.6 : HITS
+      * 2.7 : Katz Centrality
+      
    3 : Power 
 
 
@@ -241,6 +243,8 @@ If a directed network is not strongly connected, then only vertices that are in 
 
 ## 2.5 Page Rank
 
+Un nodo è importante se è linked da altri nodi importanti e cita altri nodi in modo parsimonioso.
+
 Prendo i top 10 paper per Page Rank
 
 ```{r}
@@ -283,8 +287,128 @@ graph %>%
   )
 
 ```
+## 2.6 : HITS
 
-## 2.6 : Katz centrality
+Qui abbiamo 2 tipi di nodi centrali : 
+
+  - Autorità : contengono informazioni importanti riguardo il topic di interesse
+
+  - Hub : mi dice dov trovare le informazioni autorevoli
+  
+Un nodo èpuò anche essr entrambi o nessuno
+
+
+La Kleinberg centrality thesis dice : 
+
+Un nodo è un' Autorità se è linkato da Hubs, è un Hub se linka delle Autorità.
+
+
+```{r}
+
+# Calcola HITS (Hub e Authority scores)
+hits_result <- authority_score(graph, scale = TRUE)
+hub_result <- hub_score(graph, scale = TRUE)
+
+# Aggiungi ai nodi del grafo
+graph <- graph %>%
+  mutate(
+    authority = hits_result$vector,
+    hub = hub_result$vector
+  )
+
+
+```
+
+Top 10 Authority (paper autorevoli)
+
+```{r}
+
+top_authority <- graph %>%
+  as_tibble() %>%
+  arrange(desc(authority)) %>%
+  select(name, authority, category) %>%
+  head(10)
+
+print(top_authority)
+
+```
+
+Top 10 Hub (paper che linkano autorità)
+
+```{r}
+
+top_hub <- graph %>%
+  as_tibble() %>%
+  arrange(desc(hub)) %>%
+  select(name, hub, category) %>%
+  head(10)
+
+print(top_hub)
+
+
+```
+
+Vediamo come sono distribuiti i vari paper
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+graph %>%
+  as_tibble() %>%
+  ggplot(aes(x = authority, y = hub, color = category)) +
+  geom_point(alpha = 0.6, size = 2) +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = "Relazione tra Authority e Hub score (HITS)",
+    x = "Authority score",
+    y = "Hub score",
+    color = "Categoria ML"
+  ) +
+  theme_minimal()
+
+
+```
+
+Da analisi precedenti sappiamo che ogni paper riceve al massimo 5 citazioni in totale. 
+
+Ciò si traduce nel fatto che un paper per essere un hub, ha solo 5 link a disposizione al massimo e deve cercare di linkare più authorities possibili.   
+
+
+Network dei top 100 paper per authority score.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+coords <- layout_with_fr(igraph_sub)
+
+plot(
+  igraph_sub,
+  layout = coords,
+  vertex.size = 8 + 20 * (V(igraph_sub)$authority - min(V(igraph_sub)$authority)) / max(V(igraph_sub)$authority),
+  # Puoi anche usare vertex.color = gradi diversi di blu/orange secondo authority
+  vertex.color = "skyblue",
+  vertex.label = round(V(igraph_sub)$authority, 2),
+  vertex.label.cex = 0.80,
+  edge.arrow.size = 0.5,
+  main = "Top 100 paper"
+)
+
+# Di queti stessi top 100 per Authority, vado a vedere la stessa rete in cui guardo il corrispondente hub score.
+plot(
+  igraph_sub,
+  layout = coords,
+  vertex.size = 5 + 20 * (V(igraph_sub)$hub - min(V(igraph_sub)$hub)) / max(V(igraph_sub)$hub),
+  vertex.color = "skyblue",  # o gradazione come già spiegato se vuoi distinguere di più
+  vertex.label = round(V(igraph_sub)$hub, 2),
+  vertex.label.cex = 0.80,
+  edge.arrow.size = 0.5,
+  main = "Top 100 paper – Hub score (HITS)"
+)
+
+
+```
+
+
+
+## 2.7 : Katz centrality
 
 Versione ricorsiva del degree, dove “essere vicino a nodi importanti” aumenta la centralità.
 
@@ -303,11 +427,7 @@ print(top_katz)
 ```
 
 
-```{r}
 
-
-
-```
 
 ```{r}
 
