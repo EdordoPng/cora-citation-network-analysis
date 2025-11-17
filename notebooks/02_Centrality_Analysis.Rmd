@@ -22,9 +22,11 @@ knitr::opts_chunk$set(echo = TRUE)
       * 2.5 : Page Rank Centrality
       * 2.6 : HITS
       * 2.7 : Katz Centrality
-      
-   3 : Power 
-
+   3 : Compare Centralities
+   
+   
+   4 : Power 
+   5 : Compare Power and Katz Centrality
 
 ##  1 : Caricare le librerie e dati da usare
 
@@ -33,6 +35,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(igraph)
 library(dplyr)
 library(tidygraph)
+library(ggrepel)
 #library(ggraph)
 library(ggplot2)
 
@@ -411,31 +414,282 @@ plot(
 ## 2.7 : Katz centrality
 
 Versione ricorsiva del degree, dove “essere vicino a nodi importanti” aumenta la centralità.
+un paper ha alta Katz se riceve citazioni da paper che a loro volta ricevono molte citazioni. 
 
-Prendo i top 10 paper per Katz
+Calcola il raggio spettrale r (massimo autovalore in valore assoluto)
+
+Usa alpha = 0.85/r (damping factor) per garantire convergenza (serve alpha < 1/r)
+
+La funzione alpha_centrality() implementa la formula di Katz
 
 ```{r}
 
-top_katz <- graph %>%
-  as_tibble() %>%
-  arrange(desc(katz)) %>%
-  select(name, katz, category) %>%
-  head(10)
+A <- as_adjacency_matrix(graph, sparse = TRUE)
+eig <- eigen(A)$values
+r = max(abs(eig))
+alpha <- 0.85 / r
+katz <- alpha_centrality(ig_graph, alpha = alpha)
 
-print(top_katz)
+# Aggiungi ai nodi
+graph <- graph %>%
+  mutate(katz = katz)
+
+```
+
+## 3 : Compare Centralities
+
+```{r}
+
+# Estraggo i nodi come dataframe
+nodes <- graph %>% activate(nodes) %>% as_tibble()
+
+# Computo la media per ciascuna metrica e categoria
+compare <- nodes %>%
+  group_by(category) %>%
+  summarise(
+    avg_indegree = mean(indegree, na.rm = TRUE),
+    avg_outdegree = mean(outdegree, na.rm = TRUE),
+    avg_pagerank = mean(pagerank, na.rm = TRUE),
+    avg_closeness = mean(closeness, na.rm = TRUE),
+    avg_betweenness = mean(betweenness, na.rm = TRUE),
+    avg_katz = mean(katz, na.rm = TRUE),
+    #avg_power = mean(power, na.rm = TRUE),
+    n = n()
+  ) %>%
+  # Ordina per vedere una metrica in particolare
+  arrange(desc(avg_pagerank)) 
+
+compare
+
+
+
+
+
+```
+
+Questo plot riassume e comunica efficacemente quali categorie sono più centrali, intermediarie o ben collegate nella rete secondo le diverse misure.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+
+# Supponiamo tu abbia la tabella compare come data.frame/tibble
+# Ristruttura i dati in formato long per ggplot
+compare_long <- compare %>%
+  select(-n) %>%
+  pivot_longer(-category, names_to = "metric", values_to = "mean_value") %>%
+  # Puoi rinominare le metriche per grafico più leggibile
+  mutate(metric = factor(metric,
+                         levels = c("avg_indegree", "avg_outdegree", "avg_pagerank", "avg_closeness", "avg_betweenness", "avg_katz"),
+                         labels = c("Indegree", "Outdegree", "PageRank", "Closeness", "Betweenness", "Katz")))
+
+# Grafico a barre con faccette per metrica
+ggplot(compare_long, aes(x = category, y = mean_value, fill = category)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ metric, scales = "free_y", ncol = 2) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Medie delle metriche di centralità per Categoria",
+       x = "Categoria",
+       y = "Media")
+```
+
+```{r}
+# Usa solo le colonne delle metriche dalla tabella compare
+M <- compare %>% 
+  select(avg_indegree, avg_outdegree, avg_pagerank, avg_closeness, avg_betweenness, avg_katz) %>%
+  as.matrix()
+
+# Calcola la matrice delle correlazioni
+corM <- cor(M, use = "complete.obs")
+print(corM)
+
+library(corrplot)
+corrplot(corM, method = "color", addCoef.col = "black", tl.col = "black", number.cex=0.7)
+```
+
+
+Le metriche di grado e Katz formano un cluster di misure fortemente correlate che riflettono l’attività immediata e l’influenza cumulativa nei network. Pagerank e Closeness invece evidenziano aspetti più distinti della centralità, spesso inversamente correlati, rivelando diverse modalità di importanza nel network.
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+## 4 : Power
+
+Implementa l'algoritmo iterativo di Bonacich Power Centrality
+
+La formula iterata è: x_(k+1) = (1 - x_k) · A
+
+Il damping factor (0.15) serve per stabilità numerica
+
+Converge quando la differenza tra iterazioni consecutive è < 10^(-6)
+
+
+Vediamo qui la funzion per calcolare la power.
+
+Modifiche per evitare l'errore "Diff is NA":
+
+  - Ad ogni iterazione verifica che (1 - x_2) %*% A non produca NA/NaN/Inf, altrimenti interrompe il ciclo con un errore esplicito.
+
+  - Normalizzazione: Divide x_2 per max(abs(x_2)) ad ogni passo per evitare overflow/underflow numerico che causerebbero valori NA.
+
+  - Aggiunto max_iter = 1000 per prevenire loop infiniti e conversione da matrice sparse a densa per evitare comportamenti inaspettati.
+  
+```{r}
+
+power <- function(A, t) {
+  n <- dim(A)[1]
+  x_0 <- rep(0, n)
+  x_1 <- rep(1, n)
+  x_2 <- rep(1, n)
+  diff <- 1
+  eps <- 1 / 10^t
+  iter <- 0
+  max_iter <- 1000
+  
+  while (!is.na(diff) && diff > eps && iter < max_iter) {
+    x_0 <- x_1
+    x_1 <- x_2
+    
+    temp <- (1 - x_2) %*% A
+    
+    # Controllo valori invalidi
+    if (any(is.na(temp)) || any(is.nan(temp)) || any(is.infinite(temp))) {
+      stop("Valori non numerici (NA/NaN/Inf) rilevati durante l'iterazione power centrality")
+    }
+    
+    x_2 <- as.vector(temp)
+    
+    # Normalizzazione vettore
+    max_abs <- max(abs(x_2))
+    if (max_abs > 0) {
+      x_2 <- x_2 / max_abs
+    }
+    
+    diff <- sum(abs(x_2 - x_0))
+    iter <- iter + 1
+  }
+  
+  if (is.na(diff)) stop("Diff is NA durante l'iterazione")
+  return(list(vector = as.vector(x_2), iter = iter))
+}
+
+```
+
+
+```{r}
+
+# Conversione matrice sparsa in densa
+A_dense <- as.matrix(A)
+
+damping <- 0.15
+n <- nrow(A_dense)
+I <- diag(damping, n)
+Ad <- A_dense + I
+
+# Calcolo Power centrality
+p <- power(Ad, 6)$vector
+
+# Aggiunta al grafo
+graph <- graph %>%
+  mutate(power = p)
+
+```
+
+
+
+## 5 : Compare Power and Katz Centrality
+
+Alta Katz = Paper molto citato da altri paper autorevoli (è un "riferimento" nella comunità)
+
+Alta Power = Paper che può raggiungere/influenzare molti altri paper attraverso la catena di citazioni
+
+```{r}
+# sort top-5 states according to katz centrality
+round(sort(katz, decreasing=TRUE)[1:5], 3)
+
+# sort top-5 states according to power
+round(sort(p, decreasing=TRUE)[1:5], 2)
+
+
+# correlation
+cor(katz, p, method="kendall")
+
+```
+
+La correlazione di Kendall tra Katz e Power è circa 0.56, indicando una correlazione moderata: i due indici sono legati ma misurano aspetti leggermente diversi della centralità.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+nodes <- graph %>% activate(nodes) %>% as_tibble()
+
+#Calcola i quantili 75% per Katz e Power:
+
+q_katz <- quantile(nodes$katz, 0.75)
+q_power <- quantile(nodes$power, 0.75)
+
+#Visualizza con ggplot2 la relazione tra Katz e Power, aggiungendo linee ai quantili e le etichette:
+
+top_nodes <- nodes %>% filter(katz > q_katz | power > q_power)
+
+ggplot(nodes, aes(x = katz, y = power)) +
+  geom_point(alpha = 0.3) +
+  geom_label_repel(data = top_nodes, aes(label = name), max.overlaps = 15) +
+  geom_hline(yintercept = q_power, linetype = "dashed", alpha = 0.5) +
+  geom_vline(xintercept = q_katz, linetype = "dashed", alpha = 0.5) +
+  labs(title = "Confronto Katz e Power centrality", x = "Katz Centrality", y = "Power Centrality")
+
 
 ```
 
 
 
 
-```{r}
+In qusto codicevado a mostrare la rete ottenuta facendo la join tra i 100 nodi con katz più alta ed i 100 nodi con Powe più alta.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
 
 
-```
+# Estrai i veri nomi dei nodi dal subgrafo
+sg_names <- subgraph_tbl %>% as_tibble() %>% pull(name)
+
+# Fai subset della tabella/df con i dati solo di quei nodi
+sg_metrics <- top_nodes %>%
+  filter(name %in% sg_names) %>%
+  mutate(
+    katz_bin = cut(katz, breaks = quantile(katz, probs = seq(0, 1, by = 0.2), na.rm = TRUE), include.lowest = TRUE),
+    power_bin = cut(power, breaks = quantile(power, probs = seq(0, 1, by = 0.2), na.rm = TRUE), include.lowest = TRUE)
+  )
+
+# Porta tutto dentro subgraph_tbl per ggraph
+subgraph_tbl <- subgraph_tbl %>%
+  left_join(sg_metrics, by = "name")
+
+# Grafico con Katz grandezza dei nodi 
+set.seed(99)
+ggraph(subgraph_tbl, layout = "lgl") +
+  geom_edge_link(alpha = 0.4) +
+  geom_node_point(aes(size = katz_bin, color = category)) +
+  geom_node_text(aes(label = name), repel=TRUE, size = 2.7) +
+  scale_color_brewer(palette = "Set2") +
+  theme_graph()
 
 
-```{r}
-
-
+# Grafico con Power grandezza dei nodi
+set.seed(99)
+ggraph(subgraph_tbl, layout = "lgl") +
+  geom_edge_link(alpha = 0.4) +
+  geom_node_point(aes(size = power_bin, color = category)) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 2.7) +
+  scale_color_brewer(palette = "Set2") +
+  theme_graph()
 ```
