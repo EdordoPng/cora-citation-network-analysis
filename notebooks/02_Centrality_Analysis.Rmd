@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
    1 : Caricare le librerie e dati da usare
    2 : Calcolo di tutte le metriche di centralità
+      
       * 2.1 : Degree centrality
           - In-degree
           - Out-degree
@@ -22,6 +23,7 @@ knitr::opts_chunk$set(echo = TRUE)
       * 2.5 : Page Rank Centrality
       * 2.6 : HITS
       * 2.7 : Katz Centrality
+      
    3 : Compare Centralities
    4 : Power 
    5 : Compare Power and Katz Centrality
@@ -30,6 +32,8 @@ knitr::opts_chunk$set(echo = TRUE)
         - Trova le 30 coppie (i, j) con più paper citati in comune (common successors)
 
         - Trova le 30 coppie con più paper citanti in comune (common predecessors)
+
+   7 : Salvataggio Metriche computate
 
 
 ##  1 : Caricare le librerie e dati da usare
@@ -41,6 +45,7 @@ library(dplyr)
 library(tidygraph)
 library(ggrepel)
 library(ggplot2)
+library(Matrix)
 library(corrplot)
 
 ```
@@ -109,7 +114,6 @@ top_ids <- graph %>%
 subgraph_top <- graph %>%
   activate(nodes) %>%
   filter(name %in% top_ids)
-
 
 ```
 
@@ -418,7 +422,20 @@ Ciò si traduce nel fatto che un paper per essere un hub, ha solo 5 link a dispo
 
 Network dei top 100 paper per authority score.
 
+Vediamo tale rete prima in base all'Authority Score, e poi mantenendo edges e nodi ne mostriamo anche il relativo Hub Score.
+
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Estraggo i nomi dei top 100 paper per authority
+top100_authority_ids <- graph %>%
+  activate(nodes) %>%
+  as_tibble() %>%
+  arrange(desc(authority)) %>%
+  head(100) %>%
+  pull(name)
+
+# Creo il subgrafo indotto da questi 100 nodi
+igraph_sub <- induced_subgraph(graph, vids = which(V(graph)$name %in% top100_authority_ids))
 
 coords <- layout_with_fr(igraph_sub)
 
@@ -426,7 +443,7 @@ palette_categoria <- RColorBrewer::brewer.pal(length(unique(V(igraph_sub)$catego
 colori_nodi <- palette_categoria[as.numeric(as.factor(V(igraph_sub)$category))]
 
 
-# Plot Authority con nodi colorati
+# Plot Authority
 plot(
   igraph_sub,
   layout = coords,
@@ -435,10 +452,10 @@ plot(
   vertex.label = round(V(igraph_sub)$authority, 2),
   vertex.label.cex = 0.8,
   edge.arrow.size = 0.5,
-  main = "Top 100 paper"
+  main = "Top 100 paper per Authority"
 )
 
-# Aggiungi legenda 
+# Legenda 
 legend(
   "topright",
   legend = levels(as.factor(V(igraph_sub)$category)),
@@ -450,7 +467,7 @@ legend(
 )
 
 
-# Plot Hub con nodi colorati
+# Plot Hub con
 plot(
   igraph_sub,
   layout = coords,
@@ -459,7 +476,7 @@ plot(
   vertex.label = round(V(igraph_sub)$hub, 2),
   vertex.label.cex = 0.8,
   edge.arrow.size = 0.5,
-  main = "Top 100 paper – Hub score (HITS)"
+  main = "Hub score (HITS) dei Top 100 paper per Authority"
 )
 
 legend(
@@ -503,12 +520,13 @@ A <- as_adjacency_matrix(graph, sparse = TRUE)
 eig <- eigen(A)$values
 r = max(abs(eig))
 alpha <- 0.85 / r
-katz <- alpha_centrality(ig_graph, alpha = alpha)
+katz <- alpha_centrality(graph, alpha = alpha)
 
 # Aggiungo come attributo dei nodi la Katz calcolata
 graph <- graph %>%
   mutate(katz = katz)
 
+graph
 ```
 
 Il problema della Katz Centrality è che:
@@ -536,6 +554,7 @@ compare <- nodes %>%
     avg_closeness = mean(closeness, na.rm = TRUE),
     avg_betweenness = mean(betweenness, na.rm = TRUE),
     avg_katz = mean(katz, na.rm = TRUE),
+    # Numero di paper in quella categoria
     n = n()
   ) %>%
   # Ordina per vedere una metrica in particolare
@@ -543,17 +562,12 @@ compare <- nodes %>%
 
 compare
 
-
-
-
-
 ```
 
 Questo plot riassume e comunica quali categorie sono più centrali, intermediarie o ben collegate nella rete secondo le diverse misure.
 
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
 
-# Supponiamo tu abbia la tabella compare come data.frame/tibble
 # Ristruttura i dati in formato long per ggplot
 compare_long <- compare %>%
   select(-n) %>%
@@ -582,7 +596,7 @@ M <- compare %>%
   select(avg_indegree, avg_outdegree, avg_pagerank, avg_closeness, avg_betweenness, avg_katz) %>%
   as.matrix()
 
-# Calcola la matrice delle correlazioni
+# Calcolo la matrice delle correlazioni
 corM <- cor(M, use = "complete.obs")
 
 print(corM)
@@ -684,6 +698,7 @@ p <- power(Ad, 6)$vector
 graph <- graph %>%
   mutate(power = p)
 
+graph
 ```
 
 
@@ -695,13 +710,20 @@ Alta Power = Paper che può influenzare altri paper
 
 ```{r}
 
+cat("Top-5 states by katz centrality : \n\n")
 # sort top-5 states according to katz centrality
+
 round(sort(katz, decreasing=TRUE)[1:5], 3)
 
+
+
+cat("Top-5 states by Power : \n\n")
 # sort top-5 states according to power
+
 round(sort(p, decreasing=TRUE)[1:5], 2)
 
 # correlation
+cat("Correlazione di Kendall tra Katz e Power : ")
 cor(katz, p, method="kendall")
 
 ```
@@ -736,47 +758,6 @@ ggplot(nodes, aes(x = katz, y = power, color = category)) +
 ```
 
 
-In qusto codice vado infine a mostrare la rete ottenuta facendo la join tra i 100 nodi con katz più alta ed i 100 nodi con Power più alta.
-
-```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
-
-
-# Estraggo i nomi dei nodi dal subgrafo
-sg_names <- subgraph_tbl %>% as_tibble() %>% pull(name)
-
-# Faccio subset della tabella/df con i dati solo di quei nodi
-sg_metrics <- top_nodes %>%
-  filter(name %in% sg_names) %>%
-  mutate(
-    katz_bin = cut(katz, breaks = quantile(katz, probs = seq(0, 1, by = 0.2), na.rm = TRUE), include.lowest = TRUE),
-    power_bin = cut(power, breaks = quantile(power, probs = seq(0, 1, by = 0.2), na.rm = TRUE), include.lowest = TRUE)
-  )
-
-# Porto tutto dentro subgraph_tbl per ggraph
-subgraph_tbl <- subgraph_tbl %>%
-  left_join(sg_metrics, by = "name")
-
-
-# Grafico con Katz grandezza dei nodi 
-set.seed(99)
-ggraph(subgraph_tbl, layout = "lgl") +
-  geom_edge_link(alpha = 0.4) +
-  geom_node_point(aes(size = katz_bin, color = category)) +
-  geom_node_text(aes(label = name), repel=TRUE, size = 2.7) +
-  scale_color_brewer(palette = "Set2") +
-  theme_graph()
-
-
-# Grafico con Power grandezza dei nodi
-set.seed(99)
-ggraph(subgraph_tbl, layout = "lgl") +
-  geom_edge_link(alpha = 0.4) +
-  geom_node_point(aes(size = power_bin, color = category)) +
-  geom_node_text(aes(label = name), repel = TRUE, size = 2.7) +
-  scale_color_brewer(palette = "Set2") +
-  theme_graph()
-```
-
 ## 6 : Uso delle 2 matrici proiezioni A %*% t(A) e t(A) %*% A (prodotto matriciale)
 
   - Trova le 30 coppie (i, j) con più paper citati in comune (common successors)
@@ -786,8 +767,7 @@ ggraph(subgraph_tbl, layout = "lgl") +
 Voglio studiare ora quanti paper citanti hanno in comune 2 paper i e j, e quanti paper citanti hanno in comune 2 paper i e j
 
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
-
-library(Matrix)
+# Richiesta la libreria MAtrix 
 
 # Matrice di adiacenza (sparse, più efficiente)
 A <- as_adj(graph, sparse = TRUE)
@@ -856,6 +836,57 @@ ggraph(g_cited, layout = "fr") +
 
 
 ```
+
+
+## Salvataggio Metriche computate
+
+```{r}
+
+## Salvataggio Metriche computate
+
+dir_processed <- "../data/processed"
+
+if (!dir.exists(dir_processed)) {
+  dir.create(dir_processed, recursive = TRUE)
+}
+
+# Salva il grafo completo con tutte le metriche di centralità
+save(graph, file = file.path(dir_processed, "graph_with_centralities.RData"))
+
+# Verifica attributi nodi salvati
+cat("\n=== ATTRIBUTI NODI SALVATI ===\n")
+cat(paste(vertex_attr_names(graph), collapse = ", "), "\n")
+
+# Salva anche una versione CSV dei nodi per analisi esterne
+nodes_data <- graph %>%
+  activate(nodes) %>%
+  as_tibble()
+
+write.csv(nodes_data, 
+          file.path(dir_processed, "nodes_with_centralities.csv"), 
+          row.names = FALSE)
+
+# Salva anche gli archi con attributi (se ne hai aggiunti)
+edges_data <- graph %>%
+  activate(edges) %>%
+  as_tibble()
+
+write.csv(edges_data,
+          file.path(dir_processed, "edges_data.csv"),
+          row.names = FALSE)
+
+# Stampa riepilogo
+cat("\n=== SALVATAGGIO COMPLETATO ===\n")
+cat("✓ Grafo salvato in:", file.path(dir_processed, "graph_with_centralities.RData"), "\n")
+cat("✓ Tabella nodi salvata in:", file.path(dir_processed, "nodes_with_centralities.csv"), "\n")
+cat("✓ Tabella archi salvata in:", file.path(dir_processed, "edges_data.csv"), "\n")
+cat("\n=== INFORMAZIONI GRAFO ===\n")
+cat("  • Numero di nodi:", vcount(graph), "\n")
+cat("  • Numero di archi:", ecount(graph), "\n")
+cat("  • Numero di metriche calcolate:", length(vertex_attr_names(graph)) - 1, "\n")
+
+```
+
 
 ## Appendix: Session Info
 

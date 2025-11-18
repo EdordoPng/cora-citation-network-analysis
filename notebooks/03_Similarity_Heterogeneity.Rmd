@@ -1,0 +1,650 @@
+---
+title: "Similarity and Hetrogeneity"
+author: "Edoardo Diana"
+date: "2025-11-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Indice
+
+  1 : Caricare le librerie e dati da usare
+
+  2 : Analisi di Similarità
+
+    2.1: Cosine Similarity
+
+    2.2: Pearson Similarity
+
+    2.3: Global Similarity
+  
+    2.4: Top coppie di paper simili
+
+  3 : Analisi di Eterogeneità
+
+    3.1: Shannon Entropy
+
+    3.2: Simpson Diversity
+
+    3.3: Rao Quadratic Entropy
+    
+  4 : Assortativity e Mixing Patterns
+
+  5 : Confronto tra Similarità e Centralità
+
+  6 : Conclusioni
+
+## 1 : Caricare le librerie e dati da usare
+
+Librerie
+
+```{r}
+library(igraph)
+library(tidygraph)
+library(ggraph)
+library(dplyr)
+library(ggplot2)
+# library(corrplot)
+library(knitr)
+
+```
+
+Dati ottenuti dall'esecuzione 02_Centrality_Analysis.
+
+Andiamo ad aprire il grafo con le centralità.
+
+```{r}
+
+# Percorso file salvato
+processed_dir <- "../data/processed"
+graph_file <- file.path(processed_dir, "graph_with_centralities.RData")
+
+# Carica il grafo
+if (file.exists(graph_file)) {
+  load(graph_file)
+  cat("✓ Grafo caricato con successo!\n")
+  
+  # Verifica attributi disponibili
+  cat("\n=== ATTRIBUTI NODI DISPONIBILI ===\n")
+  print(vertex_attr_names(graph))
+  
+  cat("\n=== INFORMAZIONI GRAFO ===\n")
+  cat("  • Nodi:", vcount(graph), "\n")
+  cat("  • Archi:", ecount(graph), "\n")
+  
+} else {
+  stop("ERRORE: File non trovato! Esegui prima il Notebook 02.")
+}
+
+```
+
+## 2 : Similarità
+
+Definizione Locale : 2 nodi i e j sono simili se condividono molti vicini.
+
+## 2.1 : Cosine Similarity
+
+L'idea è qui di lavorare con la matrice di Adiacenza del grafo diretto non pesato.
+
+L'idea è di associare ogni nodo i con l'i-esima riga o colonna della matrice di Adiacenza (ottengo quindi un vettore Ai).
+
+Nota che : 
+
+  - La riga i-esima di A, indica quali nodi sono raggiunti da i (quali paper cita il paper i)
+  - La colonna i-esima di A, indica quali nodi raggiungono i (quali paper citano il paper i)
+  
+
+La similarità Coseno tra 2 nodi i e j è ottenuta misurando il coseno dell'angolo tra i vettori Ai ed Aj.
+
+
+Poichè il mio grafo è diretto, ho due scelte per misurare la similarità : 
+
+
+### Opzione 1: Similarità Coseno basata su successori comuni (paper citati in comune)
+
+Questo corrisponde a quanto i paper i e j citano la stessa letteratura.
+
+```{r}
+# A è la matrice di adiacenza (righe = from, colonne = to)
+A <- as_adjacency_matrix(graph, sparse = FALSE)
+
+# Prodotto A %*% t(A) → matrice con successori comuni
+common_successors <- A %*% t(A)
+
+# Out-degrees (somma per riga)
+out_deg <- rowSums(A)
+
+# Cosine similarity basata su successori
+D_out <- diag(1 / sqrt(out_deg))
+D_out[!is.finite(D_out)] <- 0  # gestisci nodi con out-degree = 0
+
+S_cosine_out <- D_out %*% common_successors %*% D_out
+
+rownames(S_cosine_out) <- V(graph)$name
+colnames(S_cosine_out) <- V(graph)$name
+
+```
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+
+# Trasforma la matrice in tibble "long" con colonne Var1, Var2, similarity
+similarity_df <- as.data.frame(as.table(S_cosine_out)) %>%
+  rename(node_i = Var1, node_j = Var2, similarity = Freq)
+
+# Filtra solo metà matrice senza diagonale (eviti duplicati)
+top_pairs <- similarity_df %>%
+  filter(as.character(node_i) < as.character(node_j)) %>%  # solo triangolo superiore
+  arrange(desc(similarity)) %>%
+  slice_head(n = 10)
+
+# Visualizza tabella
+kable(top_pairs, digits = 4, col.names = c("Paper 1", "Paper 2", "Cosine Similarity"))
+
+```
+
+```{r}
+
+# Estrai solo valori nel range desiderato
+similarity_values_filtered <- S_cosine_out[upper.tri(S_cosine_out)]
+similarity_values_plot <- similarity_values_filtered[similarity_values_filtered > 0]
+# similarity_values_plot <- similarity_values_filtered[]
+
+df_sim_filtered <- data.frame(similarity = similarity_values_plot)
+
+ggplot(df_sim_filtered, aes(x = similarity)) +
+  geom_histogram(bins = 40, fill = "steelblue", color = "black", alpha = 0.8) +
+  labs(
+    title = "Distribuzione Cosine Similarity (>0 , predecessori comuni)",
+    x = "Cosine Similarity",
+    y = "Frequenza"
+  ) +
+  theme_minimal()
+```
+
+### Opzione 2: Similarità basata su predecessori comuni (paper che citano entrambi)
+
+Questo corrisponde a quanto i paper i e j sono citati dalle stesse fonti.
+
+```{r}
+# Prodotto t(A) %*% A → matrice con predecessori comuni
+common_predecessors <- t(A) %*% A
+
+# In-degrees (somma per colonna)
+in_deg <- colSums(A)
+
+# Cosine similarity basata su predecessori
+D_in <- diag(1 / sqrt(in_deg))
+D_in[!is.finite(D_in)] <- 0
+
+S_cosine_in <- D_in %*% common_predecessors %*% D_in
+
+rownames(S_cosine_in) <- V(graph)$name
+colnames(S_cosine_in) <- V(graph)$name
+
+```
+
+Mostriamo qui la top delle coppie di paper che hanno molti precedessori in comune (similarità coseno entrante tendente ad 1). 
+
+```{r}
+# Trasforma matrice in tibble long
+similarity_df_in <- as.data.frame(as.table(S_cosine_in)) %>%
+  rename(node_i = Var1, node_j = Var2, similarity = Freq)
+
+# Filtro triangolo superiore senza diagonale (evita duplicati)
+top_pairs_in <- similarity_df_in %>%
+  filter(as.character(node_i) < as.character(node_j)) %>%
+  arrange(desc(similarity)) %>%
+  slice_head(n = 10)  # prendi top 
+
+# Visualizza tabella
+kable(top_pairs_in, digits = 4, col.names = c("Paper 1", "Paper 2", "Cosine Similarity"))
+```
+```{r}
+
+# Estrai solo valori nel range desiderato
+similarity_values_filtered <- S_cosine_in[upper.tri(S_cosine_in)]
+similarity_values_plot <- similarity_values_filtered[similarity_values_filtered > 0]
+
+df_sim_filtered <- data.frame(similarity = similarity_values_plot)
+
+ggplot(df_sim_filtered, aes(x = similarity)) +
+  geom_histogram(bins = 40, fill = "steelblue", color = "black", alpha = 0.8) +
+  labs(
+    title = "Distribuzione Cosine Similarity ( >0 , predecessori comuni)",
+    x = "Cosine Similarity",
+    y = "Frequenza"
+  ) +
+  theme_minimal()
+```
+
+
+Qui andiamo a tenere solo le coppie di nodi che hanno una similarità > 0 e < 1 (dunque tutte le coppie con 0 e 1 son eliminate).
+
+Se prendessi le prime 500 coppie per simlarità massima, tutte queste hanno un 1.
+
+Dunque ho tagliato via 
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+
+# Step 1: Estrai top 500 coppie per cosine similarity (solo 0 < sim < 1)
+similarity_df <- as.data.frame(as.table(S_cosine_in)) %>%
+  rename(node_i = Var1, node_j = Var2, similarity = Freq) %>%
+  filter(as.character(node_i) < as.character(node_j)) %>%
+  filter(similarity > 0 & similarity < 1) %>%
+  filter(similarity > 0) %>%
+  arrange(desc(similarity)) %>% 
+  slice_head(n = 500)
+
+# Step 2: Crea il grafo pesato
+sim_graph <- graph_from_data_frame(similarity_df, directed = FALSE)
+
+# (facoltativo) Porta gli attributi categoria dal grafo originale, se presenti
+if ("category" %in% colnames(nodes)) {
+  V(sim_graph)$category <- nodes$category[match(V(sim_graph)$name, nodes$name)]
+}
+
+ggraph(sim_graph, layout = "fr") +
+  geom_edge_link(aes(width = similarity), color = "steelblue", alpha = 0.6) +
+  geom_node_point(aes(color = category), size = 5, alpha = 0.8) +
+  #geom_node_text(aes(label = name), repel = TRUE, size = 2.5) +
+  scale_edge_width(range = c(0.5, 3.5)) +
+  theme_graph() +
+  labs(
+    title = "Top 500 coppie per cosine similarity (predecessori comuni)",
+    width = "Cosine Similarity",
+    color = "Categoria"
+  )
+
+
+```
+
+##  2.2: Pearson Similarity
+
+La similarità tra i nodi i e j è il coefficiente di correlazione tra i vettori Ai ed Aj.
+
+Questa misura va da -1 ad 1.
+
+Al numeratore della formula ho la covarianza tra Ai e Aj.
+
+Una covarianza positiva tra i e j si verifica quando condividono più vicini di quanti ce ne aspettassimo. 
+
+Una covarianza negativa tra i e j si verifica quando condividono meno vicini di quanti ce ne aspettassimo.
+
+
+La correlazione di Pearson tra due nodi i e j misura quanto i loro pattern di connessioni siano linearmente correlati, tenendo conto della media dei loro vicini (a differenza della cosine similarity che non considera la media).
+
+```{r}
+
+# Matrice di adiacenza
+A <- as_adjacency_matrix(graph, sparse = FALSE)
+
+# ============================================================================
+# 1. PEARSON SIMILARITY - Successori comuni (paper citati in comune)
+# ============================================================================
+
+S_pearson_out <- cor(t(A))
+diag(S_pearson_out) <- 0
+rownames(S_pearson_out) <- V(graph)$name
+colnames(S_pearson_out) <- V(graph)$name
+
+# ============================================================================
+# 2. PEARSON SIMILARITY - Predecessori comuni (paper citanti in comune)
+# ============================================================================
+
+S_pearson_in <- cor(A)
+diag(S_pearson_in) <- 0
+rownames(S_pearson_in) <- V(graph)$name
+colnames(S_pearson_in) <- V(graph)$name
+
+
+```
+
+Top coppie per Pearson 
+
+```{r}
+
+
+# Successori comuni
+
+pearson_values_out <- S_pearson_out[upper.tri(S_pearson_out)]
+
+# Filtra valori "significativi" (es. |pearson| > 0.1)
+pearson_significant <- pearson_values_out[abs(pearson_values_out) > 0.1]
+
+ggplot(data.frame(pearson = pearson_significant), aes(x = pearson)) +
+  geom_histogram(bins = 50, fill = "violet", color = "black", alpha = 0.7) +
+  scale_x_continuous(limits = c(-1, 1)) +
+  labs(
+    title = "Distribuzione della Pearson similarity sui successori comuni (|ρ| > 0.1) )",
+    x = "Pearson similarity",
+    y = "Frequenza"
+  ) +
+  theme_minimal()
+
+
+# Predecessori comuni
+
+pearson_values_in <- S_pearson_in[upper.tri(S_pearson_in)]
+
+# Filtra valori "significativi" (es. |pearson| > 0.1)
+pearson_significant <- pearson_values_in[abs(pearson_values_in) > 0.1]
+
+ggplot(data.frame(pearson = pearson_significant), aes(x = pearson)) +
+  geom_histogram(bins = 50, fill = "violet", color = "black", alpha = 0.7) +
+  scale_x_continuous(limits = c(-1, 1)) +
+  labs(
+    title = "Distribuzione della Pearson similarity sui predecessori comuni (|ρ| > 0.1) )",
+    x = "Pearson similarity",
+    y = "Frequenza"
+  ) +
+  theme_minimal()
+
+
+```
+
+La maggior parte delle coppie di paper non condivide alcun predecessore (paper che li citano).
+
+Quindi la correlazione di Pearson è esattamente zero o molto vicina a zero.
+
+I 2 grafici mostrano quindi la distribuzione degli indici di similarità lungo tutte le coppie di paper.
+E lo fanno di quelle sole coppie che hanno un indice di similarità |ρ| > 0.1
+
+Solo poche centinaia/migliaia di coppie hanno predecessori in comune e quindi valori di Pearson non nulli.
+
+In pratica: la rete è molto sparsa, quindi la distribuzione della Pearson similarity è dominata da zeri o valori vicini a zero
+
+Dove ho correlazioni positive ho che : quando un paper cita uno, tende a citare anche l'altro.
+
+
+Infine le similarità negative sono così poco rilevanti che vengon filtrate tutte (sono molto vicine allo 0).
+
+Non ci sono "competizioni" tra paper nella citazione: citare un paper non esclude citarne un altro.
+
+```{r}
+
+pearson_values <- S_pearson_in[upper.tri(S_pearson_in)]
+pearson_values <- pearson_values[!is.na(pearson_values)]
+
+cat("Coppie con ρ < -0.1:", sum(pearson_values < -0.1), "\n")
+cat("Coppie con ρ > 0.1:", sum(pearson_values > 0.1), "\n")
+cat("Percentuale negativi significativi:", 
+    round(100 * mean(pearson_values < -0.1), 4), "%\n")
+
+
+```
+
+
+##  2.3: Global Similarity
+
+Qui consideriamo il fatto che 2 nodi possono essere simili in vari modi, ad esempio usando path più lunghi o magari per via indiretta.
+
+Dunque 2 nodi potrebbero avere pochi vicini in comune ma esser comunque simili in modo globale.
+
+La presenza di path, di qualsiasi lunghezza, tra nodi è un indizio di similarità, infatii i path più brevi contano di più.
+
+
+Ho che 2 nodi i e j sono simili se i vicini di i sono simili a j.
+
+Serve dapprima Normalizzare.
+Ciò serve per garantire che il calcolo della global similarity abbia senso numerico, converga e sia interpretabile come una misura “globale”.
+
+1. Matrice di adiacenza normalizzata per grado uscente
+
+```{r}
+
+A <- as_adjacency_matrix(graph, sparse = FALSE)
+
+# Normalizzazione per riga (out-degree)
+out_deg <- rowSums(A)
+A_norm <- sweep(A, 1, out_deg, FUN = "/")
+
+# Gestisci nodi con out-degree = 0 (righe diventano NaN)
+A_norm[is.na(A_norm)] <- 0
+
+cat("Dimensioni:", nrow(A_norm), "x", ncol(A_norm), "\n\n")
+
+```
+
+2. Calcolo del raggio spettrale
+
+```{r}
+
+eigenvalues <- eigen(A_norm)$values
+rho_A <- max(Mod(eigenvalues))
+
+cat("Raggio spettrale di A normalizzata:", round(rho_A, 6), "\n")
+```
+Il raggio spettrale 
+ρ(A) è il valore assoluto massimo (modulo) degli autovalori di A.
+
+Per una matrice stocastica (dove ogni riga somma a 1), come quella ottenuta normalizzando per grado uscente, il massimo autovalore è sempre 1.
+
+Poiché ρ(A_norm)=1, il parametro α deve essere scelto strettamente inferiore a 1 per garantire la convergenza.
+
+
+3. Scelta del parametro alpha
+
+Cammini di lunghezza k contribuiscono con peso alpha^k
+
+```{r}
+# Usiamo 0.85 come nel PageRank
+alpha <- 0.85 / rho_A
+
+cat("Alpha scelto:", round(alpha, 6), "\n")
+```
+
+4. Calcolo della matrice di similarità globale
+
+```{r}
+
+n <- nrow(A_norm)
+I <- diag(1, n)
+M <- I - alpha * A_norm
+
+# Inverto la matrice: S = (I - alpha*A)^(-1)
+S_global <- solve(M)
+
+rownames(S_global) <- V(graph)$name
+colnames(S_global) <- V(graph)$name
+
+```
+
+5. Statistiche (esclusa diagonale)
+
+Metto la diagonale principale a zero per evitare il fatto che si sballino i conti dato che un nodo è simile a se stesso.
+
+```{r}
+
+S_global_offdiag <- S_global
+diag(S_global_offdiag) <- 0
+
+cat("=== STATISTICHE GLOBAL SIMILARITY (esclusa diagonale) ===\n")
+cat("  Min:", round(min(S_global_offdiag), 6), "\n")
+cat("  Max:", round(max(S_global_offdiag), 6), "\n")
+cat("  Media:", round(mean(S_global_offdiag), 6), "\n")
+cat("  Mediana:", round(median(S_global_offdiag), 6), "\n\n")
+```
+Avere una similarità media molto bassa è tipico di reti sparse
+
+6. Top 50 coppie per global similarity
+
+```{r}
+
+upper_tri_indices <- upper.tri(S_global_offdiag, diag = FALSE)
+
+global_pairs <- data.frame(
+  Paper1 = rownames(S_global_offdiag)[row(S_global_offdiag)[upper_tri_indices]],
+  Paper2 = colnames(S_global_offdiag)[col(S_global_offdiag)[upper_tri_indices]],
+  global_sim = S_global_offdiag[upper_tri_indices]
+)
+
+# Aggiungi le categorie dei paper
+global_pairs <- global_pairs %>%
+  mutate(
+    Category1 = V(graph)$category[match(Paper1, V(graph)$name)],
+    Category2 = V(graph)$category[match(Paper2, V(graph)$name)]
+  )
+
+
+top_global <- global_pairs %>%
+  arrange(desc(global_sim)) %>%
+  head(200)
+
+kable(top_global,
+      row.names = FALSE,
+      digits = c(0, 0, 6),
+      col.names = c("Paper 1", "Paper 2", "Global Similarity", "Categoria Paper1", "Categoria Paper2"))
+
+
+
+```
+
+E' interessante notare che vi sono anche coppie di nodi in cui i 2 paper appartengono a categorie diverse, come questa : 
+
+95718	32698	3.063063	Theory	Probabilistic_Methods
+
+7 Mostro la rete delle 500 coppie di nodi con più alto valore di Global similarity.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+top_200 <- global_pairs %>%
+  arrange(desc(global_sim)) %>%
+  head(200)
+
+# Creo il grafo non diretto pesato sulle coppie top 200
+graph_global <- graph_from_data_frame(top_200, directed = FALSE)
+
+# Associo la categoria ai nodi
+V(graph_global)$category <- V(graph)$category[match(V(graph_global)$name, V(graph)$name)]
+
+# Palette colori 
+categories <- unique(V(graph_global)$category)
+palette_colors <- scales::hue_pal()(length(categories))  
+names(palette_colors) <- categories
+
+# Visualizziamo la rete 
+ggraph(graph_global, layout = "fr") +
+  geom_edge_link(aes(width = global_sim), color = "grey50", alpha = 0.7) +
+  geom_node_point(aes(color = category), size = 3) +
+  #geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+  scale_edge_width(range = c(0.5, 4)) +  # Larghezza edge da min a max
+  scale_color_manual(values = palette_colors) +
+  theme_graph() +
+  labs(
+    title = "Network delle top 200 coppie per Global Similarity",
+    color = "Categoria",
+    width = "Global Similarity"
+  )
+```
+  
+
+##  2.4: Top coppie di paper simili
+
+### Katz centrality e similarità
+
+La Katz centrality di un nodo i è esattamente la somma delle similarità di i con tutti gli altri nodi.
+
+```{r}
+
+# Calcolo matrice di adiacenza normalizzata per grado uscente (se non già presente)
+A <- as_adjacency_matrix(graph, sparse = FALSE)
+out_deg <- rowSums(A)
+A_norm <- sweep(A, 1, out_deg, FUN = "/")
+A_norm[is.na(A_norm)] <- 0
+
+# Calcolo raggio spettrale e impostazione alpha coerente
+eig <- eigen(A_norm)$values
+r <- max(abs(eig))
+alpha <- 0.85 / r
+
+# Calcola la Katz centrality in modo teoricamente correto
+katz_manual <- as.vector(rowSums(S_global))  # Somma delle global similarity
+
+# (opzionale) Aggiungi come nuovo attributo al grafo
+V(graph)$katz_norm <- katz_manual
+
+# Verifica numerica (devono essere uguali: la proprietà è soddisfatta)
+cat("Differenza media Katz (somma S_global):", mean(abs(katz_manual - rowSums(S_global))), "\n")
+cat("Differenza massima Katz (somma S_global):", max(abs(katz_manual - rowSums(S_global))), "\n")
+cat("Correlazione Katz (somma S_global):", cor(katz_manual, rowSums(S_global)), "\n")
+
+```
+La relazione tra Katz e la somma delle similarità globali è dimostrata.
+
+```{r}
+
+# Dataframe confronto (ora le 2 colonne sono identiche per definizione!)
+comparison_df <- data.frame(
+  node = V(graph)$name,
+  katz_manual = katz_manual,
+  sum_sim = rowSums(S_global),
+  difference = abs(katz_manual - rowSums(S_global))
+)
+
+# Statistiche confronto
+cat("Correlazione Katz - Somma Global Similarity:", cor(comparison_df$katz_manual, comparison_df$sum_sim), "\n")
+cat("Differenza media:", mean(comparison_df$difference), "\n")
+cat("Differenza massima:", max(comparison_df$difference), "\n")
+
+# Visualizza scatterplot aggiornato
+ggplot(comparison_df, aes(x = katz_manual, y = sum_sim)) +
+  geom_point(alpha = 0.85, color = "black") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  labs(
+    title = "Katz Centrality = Somma delle Similarità Globali",
+    x = "Katz Centrality (manuale)",
+    y = "Somma Global Similarity"
+  ) +
+  theme_minimal()
+
+
+
+```
+
+##  3 : Analisi di Eterogeneità
+
+Un nodo è eterogeneo se è dissimile dai vicini.
+
+L'eterogeneità può essere integrata nella centralità.
+Infatti i nodi che ricevono archi da altri nodi che sono eterogenei, sono considerati più importanti rispetto a quelli che ricevono un arco da nodi molto simili tra loro.
+
+```{r}
+
+
+```
+
+##  3.1: Shannon Entropy
+
+```{r}
+
+
+```
+
+##  3.2: Simpson Diversity
+
+```{r}
+
+
+```
+
+##  3.3: Rao Quadratic Entropy
+
+```{r}
+
+
+```
+    
+##  4 : Assortativity e Mixing Patterns
+
+
+```{r}
+
+
+```
+
+##  5 : Confronto tra Similarità e Centralità
