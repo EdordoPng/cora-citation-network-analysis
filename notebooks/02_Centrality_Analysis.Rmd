@@ -23,10 +23,14 @@ knitr::opts_chunk$set(echo = TRUE)
       * 2.6 : HITS
       * 2.7 : Katz Centrality
    3 : Compare Centralities
-   
-   
    4 : Power 
    5 : Compare Power and Katz Centrality
+   6 : Uso delle 2 matrici proiezioni A %*% t(A) e t(A) %*% A (prodotto matriciale)
+
+        - Trova le 30 coppie (i, j) con più paper citati in comune (common successors)
+
+        - Trova le 30 coppie con più paper citanti in comune (common predecessors)
+
 
 ##  1 : Caricare le librerie e dati da usare
 
@@ -36,8 +40,8 @@ library(igraph)
 library(dplyr)
 library(tidygraph)
 library(ggrepel)
-#library(ggraph)
 library(ggplot2)
+library(corrplot)
 
 ```
 
@@ -58,14 +62,13 @@ cat("Oggetti caricati correttamente\n")
 ## 2 : Calcolo di tutte le metriche di centralità
 
   * Degre Centrality :
-
-    - In-degree Centrality
-    - Out-degree Centrality
-
+      - In-degree Centrality
+      - Out-degree Centrality
   * Closness Centrality
   * Betweenness Centrality
   * Eigenvector Centrality
   * Page Rank Centrality
+  * HITS
   * Katz Centrality
 
 ```{r}
@@ -83,8 +86,11 @@ graph <- graph %>%
 
 ## 2.1 Degree centrality
 
-Il degree (grado) è il numero di archi incidenti a un nodo.
-Ho un grafo diretto, dunque ne avrò 2 tipi : 
+Il degree (grado) è il numero di archi incidenti ad un nodo.
+
+Un nodo è importante se è linkato da tanti altri nodi. 
+
+Qui lavoriamo con un grafo diretto, dunque ne avrò 2 tipi di degree : 
 
   - In-degree: numero di archi entranti (citazioni ricevute da un paper)
 
@@ -126,6 +132,19 @@ ggraph(subgraph_top, layout = "fr") +
   theme_void() +
   theme(legend.position = "right")
 
+graph %>%
+  activate(nodes) %>%
+  as_tibble() %>%
+  ggplot(aes(x = indegree, fill = category)) +
+  geom_histogram(binwidth = 1, position = "stack", color = "black", alpha = 0.75) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Distribuzione dell'In-degree Centrality per Categoria",
+    x = "In-degree centrality",
+    y = "Numero di paper",
+    fill = "Categoria"
+  ) +
+  theme_minimal()
 
 ```
 
@@ -142,13 +161,13 @@ In questi casi la closeness perde di informatività.
  
 Infatti è molto informativa solo per reti fortemente connesse, mentre in reti grandi e dirette ho che molte distanze sono infinite.
 
+La presenza di numerosi nodi isolati e la frammentazione della rete rendono la closeness centrality poco informativa, poiché questa metrica assume che tutti i nodi possano raggiungere tutti gli altri nodi, condizione non verificata in questa rete.
+
 
 Elenco i top 500 paper per Closeness
 
 ```{r}
 
-
-# Estrai i top 10 paper per closeness centrality
 top_closeness <- graph %>%
   as_tibble() %>%
   arrange(desc(closeness)) %>%
@@ -158,7 +177,7 @@ top_closeness <- graph %>%
 print(top_closeness)
 
 
-# Estraggo i nodi con closeness più alta
+# Estraggo solo i nomi dei nodi con closeness più alta
 top_ids_closeness <- graph %>%
   as_tibble() %>%
   top_n(500, closeness) %>%
@@ -181,8 +200,12 @@ Elenco i top 10 paper per Betweenness
 
 High betweenness = ruolo di ponte/intermediazione.
 
+Rimuovere nodi con alta betweenness casua la più grande distruzione delle comunicazioni tra gli altri vertici.
 
-Prendo i Top 10 paper per Betweenness, mostro la tabella ed il grafo a barre.
+
+Prendo i Top 10 paper per Betweenness, mostro la tabella ed il grafo a barre. 
+
+Infine la distribuzione dei paper in merito alla Betweenness.
 
 ```{r}
 top_betw <- graph %>%
@@ -202,6 +225,7 @@ ggplot(top_betw, aes(x = reorder(name, betweenness), y = betweenness, fill = cat
     x = "Paper ID",
     y = "Betweenness"
   )
+
 ```
 
 Distribuzione della Betweenness centrality e Distribuzione della Betweenness centrality per categoria
@@ -221,7 +245,7 @@ graph %>%
   )
 
 
-#Distribuzione Betweenness per categoria
+# Distribuzione Betweenness per categoria
 
 graph %>%
   as_tibble() %>%
@@ -238,15 +262,29 @@ graph %>%
 
 ## 2.4 Eigenvector Centrality
 
+E' una estnsione della degre centrality, la quale assgnava 1 punto per ogni link entrante che un nodo riceve.
+
+Ora un nodo è importante se è linkato da altri nodi importanti.
+
 A practical problem with eigenvector centrality is that it works well only if the graph is (strongly) connected
 
 Le Directed real networks, come quella che qui stiamo considerano, non hanno tali caratteristiche.
 
 If a directed network is not strongly connected, then only vertices that are in strongly connected components of at least two nodes or in the out-component of such components can have non-zero eigenvector centrality
 
+Dunque non procedo con l'esplorare questa metrica.
+
 ## 2.5 Page Rank
 
-Un nodo è importante se è linked da altri nodi importanti e cita altri nodi in modo parsimonioso.
+Un nodo è importante se è linked da altri nodi importanti e cita altri nodi in modo parsimonioso o se riceve molti archi entranti.
+
+Ho che 3 fattori distinti determinano il Pag Rank di un nodo : 
+
+  - il numero di link che riceve 
+  - la centralità dei nodi da cui riceve i link
+  - quanto i nodi da cui si ricevono i link sono propensi a linkar altri nodi
+
+
 
 Prendo i top 10 paper per Page Rank
 
@@ -292,13 +330,15 @@ graph %>%
 ```
 ## 2.6 : HITS
 
+Qui si valuta l'importanza di un nodo anche in base a quanto sono importanti i noti citati dal nodo analizzato (Hub)
+
 Qui abbiamo 2 tipi di nodi centrali : 
 
   - Autorità : contengono informazioni importanti riguardo il topic di interesse
 
   - Hub : mi dice dov trovare le informazioni autorevoli
   
-Un nodo èpuò anche essr entrambi o nessuno
+Un nodo può anche essr entrambi o nessuno
 
 
 La Kleinberg centrality thesis dice : 
@@ -306,13 +346,13 @@ La Kleinberg centrality thesis dice :
 Un nodo è un' Autorità se è linkato da Hubs, è un Hub se linka delle Autorità.
 
 
-```{r}
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
 
-# Calcola HITS (Hub e Authority scores)
+# Calcolo di HITS (Hub e Authority scores)
 hits_result <- authority_score(graph, scale = TRUE)
 hub_result <- hub_score(graph, scale = TRUE)
 
-# Aggiungi ai nodi del grafo
+# Aggiungo entrambi ai nodi del grafo
 graph <- graph %>%
   mutate(
     authority = hits_result$vector,
@@ -322,7 +362,7 @@ graph <- graph %>%
 
 ```
 
-Top 10 Authority (paper autorevoli)
+Top 10 Authorities (paper autorevoli)
 
 ```{r}
 
@@ -382,30 +422,55 @@ Network dei top 100 paper per authority score.
 
 coords <- layout_with_fr(igraph_sub)
 
+palette_categoria <- RColorBrewer::brewer.pal(length(unique(V(igraph_sub)$category)), "Set3")
+colori_nodi <- palette_categoria[as.numeric(as.factor(V(igraph_sub)$category))]
+
+
+# Plot Authority con nodi colorati
 plot(
   igraph_sub,
   layout = coords,
-  vertex.size = 8 + 20 * (V(igraph_sub)$authority - min(V(igraph_sub)$authority)) / max(V(igraph_sub)$authority),
-  # Puoi anche usare vertex.color = gradi diversi di blu/orange secondo authority
-  vertex.color = "skyblue",
+  vertex.size = 8 + 12 * (V(igraph_sub)$authority - min(V(igraph_sub)$authority)) / max(V(igraph_sub)$authority),
+  vertex.color = colori_nodi,
   vertex.label = round(V(igraph_sub)$authority, 2),
-  vertex.label.cex = 0.80,
+  vertex.label.cex = 0.8,
   edge.arrow.size = 0.5,
   main = "Top 100 paper"
 )
 
-# Di queti stessi top 100 per Authority, vado a vedere la stessa rete in cui guardo il corrispondente hub score.
+# Aggiungi legenda 
+legend(
+  "topright",
+  legend = levels(as.factor(V(igraph_sub)$category)),
+  col = palette_categoria,
+  pch = 19,
+  pt.cex = 1.5,
+  bty = "n",
+  title = "Categoria"
+)
+
+
+# Plot Hub con nodi colorati
 plot(
   igraph_sub,
   layout = coords,
-  vertex.size = 5 + 20 * (V(igraph_sub)$hub - min(V(igraph_sub)$hub)) / max(V(igraph_sub)$hub),
-  vertex.color = "skyblue",  # o gradazione come già spiegato se vuoi distinguere di più
+  vertex.size = 5 + 15 * (V(igraph_sub)$hub - min(V(igraph_sub)$hub)) / max(V(igraph_sub)$hub),
+  vertex.color = colori_nodi,
   vertex.label = round(V(igraph_sub)$hub, 2),
-  vertex.label.cex = 0.80,
+  vertex.label.cex = 0.8,
   edge.arrow.size = 0.5,
   main = "Top 100 paper – Hub score (HITS)"
 )
 
+legend(
+  "topright",
+  legend = levels(as.factor(V(igraph_sub)$category)),
+  col = palette_categoria,
+  pch = 19,
+  pt.cex = 1.5,
+  bty = "n",
+  title = "Categoria"
+)
 
 ```
 
@@ -413,14 +478,24 @@ plot(
 
 ## 2.7 : Katz centrality
 
-Versione ricorsiva del degree, dove “essere vicino a nodi importanti” aumenta la centralità.
-un paper ha alta Katz se riceve citazioni da paper che a loro volta ricevono molte citazioni. 
+Questa metrica supera i problemi della Eigenvector Centrality nel nostro contsto.
 
-Calcola il raggio spettrale r (massimo autovalore in valore assoluto)
+L'idea è di dare ad ogni nodo uno small amount di centrality in modo gratuito.
 
-Usa alpha = 0.85/r (damping factor) per garantire convergenza (serve alpha < 1/r)
+Dunque : 
 
-La funzione alpha_centrality() implementa la formula di Katz
+Un nodo è importante se se è linkdato da nodi importanti o se riceve tanti archi entranti.
+
+Quindi un paper ha alta Katz se riceve citazioni da paper che a loro volta ricevono molte citazioni. 
+
+
+Nel codice subito sotto : 
+
+  - Calcolare il raggio spettrale r (massimo autovalore in valore assoluto)
+
+  - Usare alpha = 0.85/r (damping factor) per garantire convergenza (serve alpha < 1/r)
+
+  - Calcolare la Katz Centrality mediante la funzione alpha_centrality(), che implementa la formula di Katz
 
 ```{r}
 
@@ -430,11 +505,19 @@ r = max(abs(eig))
 alpha <- 0.85 / r
 katz <- alpha_centrality(ig_graph, alpha = alpha)
 
-# Aggiungi ai nodi
+# Aggiungo come attributo dei nodi la Katz calcolata
 graph <- graph %>%
   mutate(katz = katz)
 
 ```
+
+Il problema della Katz Centrality è che:
+
+Se un nodo con alta centralità è connesso a tanti altri nodi -> tutti questi altri nodi linkati acquisiscono alta Centralità.
+
+La centralità guadagnata in virtù del ricevere un link da un nodo importante dovrebbe esser diluita se il nodo importante è molto proponso a linkare altri nodi.
+
+Il PageRank risolve questo problema. 
 
 ## 3 : Compare Centralities
 
@@ -453,7 +536,6 @@ compare <- nodes %>%
     avg_closeness = mean(closeness, na.rm = TRUE),
     avg_betweenness = mean(betweenness, na.rm = TRUE),
     avg_katz = mean(katz, na.rm = TRUE),
-    #avg_power = mean(power, na.rm = TRUE),
     n = n()
   ) %>%
   # Ordina per vedere una metrica in particolare
@@ -467,22 +549,21 @@ compare
 
 ```
 
-Questo plot riassume e comunica efficacemente quali categorie sono più centrali, intermediarie o ben collegate nella rete secondo le diverse misure.
+Questo plot riassume e comunica quali categorie sono più centrali, intermediarie o ben collegate nella rete secondo le diverse misure.
 
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
-
 
 # Supponiamo tu abbia la tabella compare come data.frame/tibble
 # Ristruttura i dati in formato long per ggplot
 compare_long <- compare %>%
   select(-n) %>%
   pivot_longer(-category, names_to = "metric", values_to = "mean_value") %>%
-  # Puoi rinominare le metriche per grafico più leggibile
   mutate(metric = factor(metric,
                          levels = c("avg_indegree", "avg_outdegree", "avg_pagerank", "avg_closeness", "avg_betweenness", "avg_katz"),
                          labels = c("Indegree", "Outdegree", "PageRank", "Closeness", "Betweenness", "Katz")))
 
-# Grafico a barre con faccette per metrica
+
+# Grafico a barre con faceting per metrica
 ggplot(compare_long, aes(x = category, y = mean_value, fill = category)) +
   geom_col(show.legend = FALSE) +
   facet_wrap(~ metric, scales = "free_y", ncol = 2) +
@@ -493,43 +574,42 @@ ggplot(compare_long, aes(x = category, y = mean_value, fill = category)) +
        y = "Media")
 ```
 
+Vediamo ora la correlazione tra le varie misure di Centralità.
+
 ```{r}
-# Usa solo le colonne delle metriche dalla tabella compare
+
 M <- compare %>% 
   select(avg_indegree, avg_outdegree, avg_pagerank, avg_closeness, avg_betweenness, avg_katz) %>%
   as.matrix()
 
 # Calcola la matrice delle correlazioni
 corM <- cor(M, use = "complete.obs")
+
 print(corM)
 
-library(corrplot)
 corrplot(corM, method = "color", addCoef.col = "black", tl.col = "black", number.cex=0.7)
-```
-
-
-Le metriche di grado e Katz formano un cluster di misure fortemente correlate che riflettono l’attività immediata e l’influenza cumulativa nei network. Pagerank e Closeness invece evidenziano aspetti più distinti della centralità, spesso inversamente correlati, rivelando diverse modalità di importanza nel network.
-
-```{r}
 
 ```
 
-```{r}
 
-```
+Le metriche di grado e Katz formano un cluster di misure fortemente correlate che riflettono l’attività immediata e l’influenza cumulativa nei network. 
 
-```{r}
+Pagerank e Closeness invece evidenziano aspetti più distinti della centralità, spesso inversamente correlati, rivelando diverse modalità di importanza nel network.
 
-```
 
 
 ## 4 : Power
 
-Implementa l'algoritmo iterativo di Bonacich Power Centrality
+In alcune circostanze la Centralità ha un'utilità limitata nel predirre chi detiene il potere nelle reti.
+
+Un nodo è MOLTO potente se è connesso con nodi POCO potenti.
+
+
+La funzione sotto riportata implementa l'algoritmo iterativo di Bonacich Power Centrality.
 
 La formula iterata è: x_(k+1) = (1 - x_k) · A
 
-Il damping factor (0.15) serve per stabilità numerica
+Il damping factor (0.15) serve per stabilità numerica.
 
 Converge quando la differenza tra iterazioni consecutive è < 10^(-6)
 
@@ -585,6 +665,7 @@ power <- function(A, t) {
 
 ```
 
+Calcolo effettivo della Power centrality
 
 ```{r}
 
@@ -606,20 +687,19 @@ graph <- graph %>%
 ```
 
 
-
 ## 5 : Compare Power and Katz Centrality
 
 Alta Katz = Paper molto citato da altri paper autorevoli (è un "riferimento" nella comunità)
 
-Alta Power = Paper che può raggiungere/influenzare molti altri paper attraverso la catena di citazioni
+Alta Power = Paper che può influenzare altri paper 
 
 ```{r}
+
 # sort top-5 states according to katz centrality
 round(sort(katz, decreasing=TRUE)[1:5], 3)
 
 # sort top-5 states according to power
 round(sort(p, decreasing=TRUE)[1:5], 2)
-
 
 # correlation
 cor(katz, p, method="kendall")
@@ -632,37 +712,39 @@ La correlazione di Kendall tra Katz e Power è circa 0.56, indicando una correla
 
 nodes <- graph %>% activate(nodes) %>% as_tibble()
 
-#Calcola i quantili 75% per Katz e Power:
+# Calcola i quantili 75% per Katz e Power:
 
 q_katz <- quantile(nodes$katz, 0.75)
 q_power <- quantile(nodes$power, 0.75)
 
-#Visualizza con ggplot2 la relazione tra Katz e Power, aggiungendo linee ai quantili e le etichette:
+# Visualizza con ggplot2 la relazione tra Katz e Power, aggiungendo linee ai quantili e le etichette:
 
 top_nodes <- nodes %>% filter(katz > q_katz | power > q_power)
 
-ggplot(nodes, aes(x = katz, y = power)) +
-  geom_point(alpha = 0.3) +
-  geom_label_repel(data = top_nodes, aes(label = name), max.overlaps = 15) +
+ggplot(nodes, aes(x = katz, y = power, color = category)) +
+  geom_point(alpha = 0.5, size = 2) +
+  geom_label_repel(data = top_nodes, aes(label = name), 
+                   max.overlaps = 15, size = 3) +
   geom_hline(yintercept = q_power, linetype = "dashed", alpha = 0.5) +
   geom_vline(xintercept = q_katz, linetype = "dashed", alpha = 0.5) +
-  labs(title = "Confronto Katz e Power centrality", x = "Katz Centrality", y = "Power Centrality")
-
+  scale_color_brewer(palette = "Set2") +
+  labs(title = "Confronto Katz e Power Centrality per Categoria",
+       x = "Katz Centrality", y = "Power Centrality",
+       color = "Categoria") +
+  theme_minimal()
 
 ```
 
 
-
-
-In qusto codicevado a mostrare la rete ottenuta facendo la join tra i 100 nodi con katz più alta ed i 100 nodi con Powe più alta.
+In qusto codice vado infine a mostrare la rete ottenuta facendo la join tra i 100 nodi con katz più alta ed i 100 nodi con Power più alta.
 
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
 
 
-# Estrai i veri nomi dei nodi dal subgrafo
+# Estraggo i nomi dei nodi dal subgrafo
 sg_names <- subgraph_tbl %>% as_tibble() %>% pull(name)
 
-# Fai subset della tabella/df con i dati solo di quei nodi
+# Faccio subset della tabella/df con i dati solo di quei nodi
 sg_metrics <- top_nodes %>%
   filter(name %in% sg_names) %>%
   mutate(
@@ -670,9 +752,10 @@ sg_metrics <- top_nodes %>%
     power_bin = cut(power, breaks = quantile(power, probs = seq(0, 1, by = 0.2), na.rm = TRUE), include.lowest = TRUE)
   )
 
-# Porta tutto dentro subgraph_tbl per ggraph
+# Porto tutto dentro subgraph_tbl per ggraph
 subgraph_tbl <- subgraph_tbl %>%
   left_join(sg_metrics, by = "name")
+
 
 # Grafico con Katz grandezza dei nodi 
 set.seed(99)
@@ -693,3 +776,90 @@ ggraph(subgraph_tbl, layout = "lgl") +
   scale_color_brewer(palette = "Set2") +
   theme_graph()
 ```
+
+## 6 : Uso delle 2 matrici proiezioni A %*% t(A) e t(A) %*% A (prodotto matriciale)
+
+  - Trova le 30 coppie (i, j) con più paper citati in comune (common successors)
+
+  - Trova le 30 coppie con più paper citanti in comune (common predecessors)
+
+Voglio studiare ora quanti paper citanti hanno in comune 2 paper i e j, e quanti paper citanti hanno in comune 2 paper i e j
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+library(Matrix)
+
+# Matrice di adiacenza (sparse, più efficiente)
+A <- as_adj(graph, sparse = TRUE)
+
+# Matrice dei paper citati in comune (successori comuni)
+common_cited <- as.matrix(A %*% t(A))
+diag(common_cited) <- 0  # opzionale, azzeri la diagonale
+
+# Matrice dei paper citanti in comune (predecessori comuni)
+common_citing <- as.matrix(t(A) %*% A)
+diag(common_citing) <- 0
+
+
+
+# Trova le 30 coppie (i, j) con più paper citati in comune
+top_cited <- which(common_cited == max(common_cited), arr.ind = TRUE)
+top_cited_df <- as.data.frame(top_cited)
+top_cited_df$shared_cited = common_cited[top_cited]
+
+# Trova le 30 coppie con più paper citanti in comune
+top_citing <- which(common_citing == max(common_citing), arr.ind = TRUE)
+top_citing_df <- as.data.frame(top_citing)
+top_citing_df$shared_citing = common_citing[top_citing]
+
+
+
+get_top_pairs <- function(mat, topn = 30) {
+  ind <- which(upper.tri(mat), arr.ind = TRUE)
+  vals <- mat[ind]
+  ord <- order(vals, decreasing = TRUE)[1:topn]
+  data.frame(
+    paper_i = ind[ord, "row"],
+    paper_j = ind[ord, "col"],
+    shared = vals[ord]
+  )
+}
+top30_cited = get_top_pairs(common_cited, 30)
+top30_citing = get_top_pairs(common_citing, 30)
+
+# (Facoltativo: aggiungi titolo/autore ai risultati usando le label dei nodi)
+# V(graph)$label oppure il campo desiderato
+
+head(top30_cited)
+head(top30_citing)
+
+```
+
+Network delle Top 30 Coppie con Più Paper Citati in Comune.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Crea edge list dalle top 30 coppie
+edges_cited <- top30_cited %>%
+  select(from = paper_i, to = paper_j, weight = shared)
+
+# Crea grafo
+g_cited <- graph_from_data_frame(edges_cited, directed = FALSE)
+
+ggraph(g_cited, layout = "fr") +
+  geom_edge_link(aes(width = weight), alpha = 0.6) +
+  geom_node_point(size = 5, color = "steelblue") +
+  geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+  scale_edge_width(range = c(0.5, 3)) +
+  labs(title = "Network delle Top 30 Coppie con Più Paper Citati in Comune") +
+  theme_graph()
+
+
+```
+
+## Appendix: Session Info
+
+```{r}
+sessionInfo()
+```
+
