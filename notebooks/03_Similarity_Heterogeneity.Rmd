@@ -47,12 +47,10 @@ library(tidygraph)
 library(ggraph)
 library(dplyr)
 library(ggplot2)
-# library(corrplot)
 library(knitr)
-
 ```
 
-Dati ottenuti dall'esecuzione 02_Centrality_Analysis.
+Carico i dati ottenuti dall'esecuzione 02_Centrality_Analysis.
 
 Andiamo ad aprire il grafo con le centralità.
 
@@ -131,7 +129,7 @@ colnames(S_cosine_out) <- V(graph)$name
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
 
 
-# Trasforma la matrice in tibble "long" con colonne Var1, Var2, similarity
+# Trasformo la matrice in tibble "long" con colonne Var1, Var2, similarity
 similarity_df <- as.data.frame(as.table(S_cosine_out)) %>%
   rename(node_i = Var1, node_j = Var2, similarity = Freq)
 
@@ -148,7 +146,7 @@ kable(top_pairs, digits = 4, col.names = c("Paper 1", "Paper 2", "Cosine Similar
 
 ```{r}
 
-# Estrai solo valori nel range desiderato
+# Tengo solo valori nel range desiderato
 similarity_values_filtered <- S_cosine_out[upper.tri(S_cosine_out)]
 similarity_values_plot <- similarity_values_filtered[similarity_values_filtered > 0]
 # similarity_values_plot <- similarity_values_filtered[]
@@ -493,7 +491,7 @@ global_pairs <- global_pairs %>%
 
 top_global <- global_pairs %>%
   arrange(desc(global_sim)) %>%
-  head(200)
+  head(50)
 
 kable(top_global,
       row.names = FALSE,
@@ -531,7 +529,6 @@ names(palette_colors) <- categories
 ggraph(graph_global, layout = "fr") +
   geom_edge_link(aes(width = global_sim), color = "grey50", alpha = 0.7) +
   geom_node_point(aes(color = category), size = 3) +
-  #geom_node_text(aes(label = name), repel = TRUE, size = 3) +
   scale_edge_width(range = c(0.5, 4)) +  # Larghezza edge da min a max
   scale_color_manual(values = palette_colors) +
   theme_graph() +
@@ -543,7 +540,7 @@ ggraph(graph_global, layout = "fr") +
 ```
   
 
-##  2.4: Top coppie di paper simili
+##  2.4: Metriche a confronto
 
 ### Katz centrality e similarità
 
@@ -613,6 +610,8 @@ Un nodo è eterogeneo se è dissimile dai vicini.
 L'eterogeneità può essere integrata nella centralità.
 Infatti i nodi che ricevono archi da altri nodi che sono eterogenei, sono considerati più importanti rispetto a quelli che ricevono un arco da nodi molto simili tra loro.
 
+Entrambe le misure che vedremo (Shannon e Simpson) sono massimizzate quando la probabilità è equamente distribuita tra gli elementi (pi = 1/n)
+
 ```{r}
 
 
@@ -620,31 +619,1219 @@ Infatti i nodi che ricevono archi da altri nodi che sono eterogenei, sono consid
 
 ##  3.1: Shannon Entropy
 
+E' un modo di definire l'eterogeneità in modo parziale, non considerando la distanza.
+
+In questo caso, la Shannon entropy misura quanto è eterogenea la distribuzione delle categorie tra i vicini di un paper (predecessori o successori).
+
+Step 1: Crea una "distribuzione di probabilità" sui vicini
+
+Per ogni nodo i:
+
+  - Posso considerare i suoi predecessori (nodi che lo citano, in-neighbors) oppure successori (nodi che cita, out-neighbors)
+
+  - Normalizzo per ottenere una distribuzione di probabilità, dove ai,j è 1 se esiste un arco da i a j, 0 altrimenti.
+  
+$$
+p_{i,j} = \frac{a_{i,j}}{\sum_k a_{i,k}} = \frac{a_{i,j}}{d_i}
+$$
+
+La Shannon entropy misura quanto è eterogenea la distribuzione delle categorie tra i vicini di un nodo:
+
+
+$$
+H(i) = -\sum_{c \in \text{categorie}} p_{i,c} \log_2(p_{i,c})
+$$
+Per calcolarla, definiamo questa funzione
+
 ```{r}
 
+# Funzione Shannon Entropy
+shannon_entropy <- function(p) {
+  # Rimuovi zeri per evitare log(0)
+  p <- p[p > 0]
+  if (length(p) == 0) return(0)
+  -sum(p * log2(p))
+}
 
 ```
+
+Calcolo Shannon Entropy per ogni nodo (basato su predecessori).
+
+Normalizziamo dunque per colonna (predecessori = in-neighbors).
+
+Ogni colonna rappresenta la distribuzione dei predecessori per quel nodo.
+
+Quindi per ogni nodo, calcola la distribuzione delle categorie dei predecessori.
+
+
+```{r}
+
+shannon_values <- sapply(V(graph), function(node) {
+  # Ottieni predecessori (nodi che citano questo nodo)
+  preds <- neighbors(graph, node, mode = "in")
+  
+  # Nessun predecessore = entropia 0
+  if (length(preds) == 0) {
+    return(0)  
+  }
+  
+  # Categorie dei predecessori
+  pred_categories <- V(graph)$category[preds]
+  
+  # Distribuzione di probabilità sulle categorie
+  category_table <- table(pred_categories)
+  p_categories <- as.numeric(category_table / sum(category_table))
+  
+  # Calcola Shannon Entropy
+  shannon_entropy(p_categories)
+})
+
+# Aggiungi come attributo del grafo
+V(graph)$shannon_entropy <- shannon_values
+
+```
+
+Creo ora il dataframe per fare un'analisi 
+
+```{r}
+# Crea dataframe per analisi
+nodes_data <- data.frame(
+  node = V(graph)$name,
+  category = V(graph)$category,
+  shannon = shannon_values
+)
+
+# Statistiche
+cat("=== STATISTICHE SHANNON ENTROPY (predecessori) ===\n")
+cat("Media:", round(mean(nodes_data$shannon, na.rm = TRUE), 4), "\n")
+cat("Mediana:", round(median(nodes_data$shannon, na.rm = TRUE), 4), "\n")
+cat("Min:", round(min(nodes_data$shannon, na.rm = TRUE), 4), "\n")
+cat("Max:", round(max(nodes_data$shannon, na.rm = TRUE), 4), "\n\n")
+
+```
+
+La tabella mostra i 10 paper con la più alta Shannon Entropy, cioè quelli citati dal mix più diversificato di categorie.
+
+```{r}
+
+# Top 10 nodi più eterogenei
+top_heterogeneous <- nodes_data %>%
+  arrange(desc(shannon)) %>%
+  head(10)
+
+kable(top_heterogeneous, digits = 4,
+      col.names = c("Paper", "Categoria", "Shannon Entropy"))
+
+```
+La Media: 0.2029 indica che in medi appunto i paper ricevono citazioni da un insieme abbastanza omogeneo di categorie
+
+
+Entropia alta → nodo connesso a vicini di molte categorie diverse (eterogeneo)
+
+Entropia bassa → nodo connesso a vicini della stessa categoria (omogeneo)
+
+
 
 ##  3.2: Simpson Diversity
 
+Questa è un altro modo per valutare l'eterogeneità.
+
+Misura la probabilità che due vicini scelti a caso appartengano a categorie diverse.
+
+$$
+S(i) = 1  - \sum_{c \in \text{categorie}} p_{i,c}^2
+$$
+
 ```{r}
 
+# Funzione Simpson Diversity
+simpson_diversity <- function(p) {
+  
+  x = 1 - sum(p * p)
+  return(x)
+}
 
 ```
 
-##  3.3: Rao Quadratic Entropy
-
 ```{r}
 
+# Per ogni nodo, calcola la distribuzione delle categorie dei predecessori
+simpson_values <- sapply(V(graph), function(node) {
+  # Ottieni predecessori (nodi che citano questo nodo)
+  preds <- neighbors(graph, node, mode = "in")
+  
+  if (length(preds) == 0) {
+    # Nessun predecessore = diversità 0
+    return(0)  
+  }
+  
+  # Categorie dei predecessori
+  pred_categories <- V(graph)$category[preds]
+  
+  # Distribuzione di probabilità sulle categorie
+  category_table <- table(pred_categories)
+  p_categories <- as.numeric(category_table / sum(category_table))
+  
+  # Calcola Simpson Diversity
+  simpson_diversity(p_categories)
+})
 
 ```
     
-##  4 : Assortativity e Mixing Patterns
 
+```{r}
+
+# Aggiungi come attributo del grafo
+V(graph)$simpson_diversity <- simpson_values
+
+# Crea dataframe per analisi
+nodes_data <- data.frame(
+  node = V(graph)$name,
+  category = V(graph)$category,
+  simpson = simpson_values
+)
+
+# Statistiche
+cat("=== STATISTICHE SIMPSON DIVERSITY (predecessori) ===\n")
+cat("Media:", round(mean(nodes_data$simpson, na.rm = TRUE), 4), "\n")
+cat("Mediana:", round(median(nodes_data$simpson, na.rm = TRUE), 4), "\n")
+cat("Min:", round(min(nodes_data$simpson, na.rm = TRUE), 4), "\n")
+cat("Max:", round(max(nodes_data$simpson, na.rm = TRUE), 4), "\n\n")
+
+```
+
+Top 10 nodi più eterogenei (Simpson)
+
+```{r}
+
+top_heterogeneous <- nodes_data %>%
+  arrange(desc(simpson)) %>%
+  head(10)
+
+kable(top_heterogeneous, digits = 4,
+      col.names = c("Paper", "Categoria", "Simpson Diversity"))
+```
+
+
+
+##  3.3: Rao Quadratic Entropy
+
+Differenza cruciale con Shannon e Simpson:
+
+Shannon & Simpson: Misurano solo uniformità della distribuzione
+
+Rao: Include anche quanto sono diverse le categorie tra loro!
+
+L'interpretazione è che Rao è GRANDE quando:
+
+  - La distribuzione è uniforme (distribuzione su molti elementi)
+
+  - Gli elementi sono molto diversi tra loro (dissimilarità alta)
+
+
+$$
+R(i) = \sum_{c_1, c_2} p_{i,c_1} \cdot p_{i,c_2} \cdot d(c_1, c_2)
+$$
+
+dove 
+
+  - pi,c è la proporzione dei vicini del nodo i nella categoria c
+
+  - d(c1,c2) è la distanza/dissimilarità tra le categorie c1 e c2. 
+
+Esempio: Una disciplina è molto eterogenea (interdisciplinare) se cita molte discipline diverse in proporzioni simili E quelle discipline sono dissimili tra loro.
+
+
+Per un grafo diretto, hai due opzioni per definire i vicini di un nodo:
+
+  - Out-neighbors (nodi citati): analizza l'eterogeneità delle categorie che il nodo i cita
+
+  - In-neighbors (nodi citanti): analizza l'eterogeneità delle categorie che citano il nodo i
+
+Nel contesto di un citation network, l'opzione più sensata è analizzare gli out-neighbors, perché misura quanto è interdisciplinare il pattern di citazioni in uscita.
+
+Rao dunque misura quanto sono diverse tra loro le categorie che il paper i cita.
+
+
+
+```{r}
+# Prendo le informazioni dal grafo e le salvo
+node_categories <- V(graph)$category
+categories <- sort(unique(node_categories))
+k <- length(categories)
+n <- vcount(graph)
+
+cat("============================================================================\n")
+cat("RAO QUADRATIC ENTROPY - Setup\n")
+cat("============================================================================\n")
+cat("  Numero paper (nodi):", n, "\n")
+cat("  Numero categorie:", k, "\n")
+cat("  Categorie:", paste(categories, collapse = ", "), "\n\n")
+
+```
+
+STEP 1 : Creare una matrice di flusso F 
+
+F è una (7×7) che rappresenta quante citazioni esistono tra categorie di paper. 
+
+Qui abbiamo 7 categorie e 5429 citazioni totali tra di esse.
+
+
+Per farlo ricorro all'uso della matrice indicatrice C, che vado a creare.
+
+Essa è una matrice n × k (paper × categorie) dove ogni elemento vale:
+
+  * C[i, c] = 1 se il paper i appartiene alla categoria c
+
+  * C[i, c] = 0 altrimenti
+
+
+Ottengo la matrice di Flusso F in questo modo : 
+
+  * A × C : Prodotto tra matrice di adiacenza (n×n) e matrice indicatrice (n×k) → risultato (n×k)
+
+    Per ogni paper i, conta quanti paper cita in ciascuna categoria
+
+  * t(C) × (A × C) : Prodotto tra C trasposta (k×n) e il risultato precedente (n×k) → risultato (k×k)
+
+    Aggrega per categoria di partenza
+
+    F[c1, c2] = somma di tutte le citazioni da paper di categoria c1 a paper di categoria c2
+
+
+```{r}
+# Matrice Indicatrice C
+C <- matrix(0, nrow = n, ncol = k)
+colnames(C) <- categories
+
+for (c_idx in 1:k) {
+  C[, c_idx] <- as.numeric(node_categories == categories[c_idx])
+}
+
+# Matrice di flusso F
+F <- t(C) %*% A %*% C
+
+rownames(F) <- categories
+colnames(F) <- categories
+
+cat("  Matrice F calcolata:", nrow(F), "×", ncol(F), "\n")
+cat("  Totale citazioni inter-categoria:", sum(F), "\n\n")
+
+```
+F rappresenta i "profili di citazione" delle categorie:
+
+  - Ogni riga di F mostra quali categorie una determinata categoria tende a citare
+
+  - Due categorie sono simili se hanno profili di citazione simili (citano le stesse altre categorie in proporzioni simili)
+
+
+
+STEP 2 : Cosine Similarity tra CATEGORIE
+
+Questo blocco calcola la cosine similarity tra tutte le coppie di categorie. 
+La cosine similarity misura quanto sono simili due categorie in base ai loro "profili di citazione" (quali altre categorie tendono a citare).
+
+La normalizzazione garantisce che la similarità dipenda solo dall'orientamento dei vettori (pattern di citazione), non dalla loro magnitudine (volume totale di citazioni).
+
+```{r}
+
+# Funzione per calcolare norma euclidea di un vettore
+euclidean <- function(x) {sqrt(sum(x^2))}
+
+# Calcola norme euclidee per ogni riga di F
+norms <- apply(F, 1, euclidean)
+
+# Matrice diagonale con 1/norma
+D_norm <- diag(1 / norms)
+# Per gestire le categorie senza citazioni
+D_norm[!is.finite(D_norm)] <- 0  
+
+# Cosine similarity: confronta profili di citazione tra categorie
+S_cat <- D_norm %*% F %*% t(F) %*% D_norm
+
+rownames(S_cat) <- categories
+colnames(S_cat) <- categories
+
+cat("  Similarità calcolata\n")
+cat("  Range similarità:", round(min(S_cat), 3), "-", round(max(S_cat), 3), "\n\n")
+
+```
+  
+STEP 3: Dissimilarità D tra CATEGORIE
+
+```{r}
+
+# Conversione della similarità in dissimilarità
+D <- 1 - S_cat
+
+# Simmetrizza (importante per Rao)
+# D <- (D + t(D)) / 2
+
+# Distanza da sé stessa = 0
+diag(D) <- 0
+
+cat("  Dissimilarità D calcolata\n")
+cat("  Range dissimilarità:", round(min(D[D > 0]), 3), "-", round(max(D), 3), "\n")
+cat("  Media dissimilarità:", round(mean(D[D > 0]), 3), "\n\n")
+
+```
+Dato che ottengo un valore alto per la Dissimilarità media : 0.911, significa che le categorie sono mediamente molto dissimili tra loro.
+
+Questo è ottimo per la Rao Entropy perché significa che posso distinguere bene l'interdisciplinarità dato che le categorie son ben separate.
+
+
+STEP 4: Distribuzione CATEGORIE per ogni PAPER
+
+Creare la matrice P che contiene, per ogni paper, la distribuzione di probabilità delle categorie che cita.
+
+Tale distribuzione P è essenziale nella formula di Rao (ha come dimensione : paper x categorie).
+
+```{r}
+
+# Creo una matrice n x 7 piena di 0
+P <- matrix(0, nrow = n, ncol = k)
+colnames(P) <- categories
+
+# Faccio ora un loop sui papers, per ognuno vado a prendere i paper che esso cita
+for (i in 1:n) {
+  
+  # Out-neighbors del paper i (paper citati da i)
+  # which(A[i, ] > 0) restituisce gli indici dei paper citati, ossiadove c'è un 1 nella riga i di A
+  out_neighbors <- which(A[i, ] > 0)
+  
+  if (length(out_neighbors) > 0) {
+    
+    # Estraggo tutte le categorie dei paper citati
+    neighbor_cats <- node_categories[out_neighbors]
+    
+    # Calcola proporzioni per ogni categoria
+    for (c in categories) {
+      
+      # Per ogni categoria, vedo infine P[i, c] che è : il numero di paper citati nella categoria c / totale paper citati
+      P[i, c] <- sum(neighbor_cats == c) / length(out_neighbors)
+    
+      }
+  }
+}
+
+papers_with_citations <- sum(rowSums(P) > 0)
+
+cat("  Matrice P calcolata:", nrow(P), "×", ncol(P), "\n")
+cat("  Paper con almeno 1 citazione out:", papers_with_citations, "\n\n")
+
+```
+
+STEP 5: Calcolo RAO per ogni PAPER
+ 
+La funzione implementa la formula della Rao Quadratic Entropy in forma matriciale.
+
+Ho che : 
+
+  - p è il vettore di lunghezza k (7 nel tuo caso) con le proporzioni delle categorie per un singolo paper
+
+  - D è la matrice k × k di dissimilarità tra categorie
+
+
+La funzione diag(p) crea una matrice diagonale k × k con i valori di p sulla diagonale.
+
+
+
+```{r}
+
+# Funzione Rao 
+rao <- function(p, D) {
+  x <- diag(p) %*% D %*% diag(p)
+  return(sum(c(x)))
+}
+
+# Applica la funzione Rao a ogni riga di P (ogni paper)
+rao_values <- apply(P, 1, function(p_i) rao(p_i, D))
+
+# Assegna nomi ai valori Rao
+names(rao_values) <- V(graph)$name
+
+
+```
+
+Step 6 : Statistiche Specializzazione vs Interdisciplinarità
+```{r}
+
+cat("============================================================================\n")
+cat("ANALISI SPECIALIZZAZIONE vs INTERDISCIPLINARITÀ\n")
+cat("============================================================================\n\n")
+
+# Calcola out-degree per ogni nodo
+out_degrees <- degree(graph, mode = "out")
+
+# Classificazione dei paper
+terminali <- sum(out_degrees == 0)
+interdisciplinari <- sum(rao_values > 0)
+specializzati <- sum(out_degrees > 0 & rao_values == 0)
+
+# Verifica totale
+totale <- vcount(graph)
+check_sum <- terminali + interdisciplinari + specializzati
+
+cat("CLASSIFICAZIONE DEI PAPER:\n\n")
+
+cat("1. Paper TERMINALI (non citano nessuno):\n")
+cat("   Numero:", terminali, "\n")
+cat("   Percentuale:", round(terminali / totale * 100, 2), "%\n")
+cat("   → Nodi senza citazioni out\n\n")
+
+cat("2. Paper SPECIALIZZATI (citano solo la propria categoria):\n")
+cat("   Numero:", specializzati, "\n")
+cat("   Percentuale:", round(specializzati / totale * 100, 2), "%\n")
+cat("   → Out-degree > 0, ma Rao = 0\n")
+cat("   → Citano solo paper della stessa categoria\n\n")
+
+cat("3. Paper INTERDISCIPLINARI (citano categorie diverse):\n")
+cat("   Numero:", interdisciplinari, "\n")
+cat("   Percentuale:", round(interdisciplinari / totale * 100, 2), "%\n")
+cat("   → Out-degree > 0 e Rao > 0\n")
+cat("   → Citano paper di categorie diverse\n\n")
+
+cat("----------------------------------------------------------------------------\n")
+cat("TOTALE:\n")
+cat("   Paper totali:", totale, "\n")
+cat("   Somma classificazioni:", check_sum, "\n")
+cat("   Verifica (devono coincidere):", ifelse(totale == check_sum, "✓ OK", "✗ ERRORE"), "\n\n")
+
+# Statistiche aggiuntive
+cat("============================================================================\n")
+cat("STATISTICHE AGGIUNTIVE\n")
+cat("============================================================================\n\n")
+
+cat("Paper con citazioni out (specializzati + interdisciplinari):\n")
+cat("   Numero:", specializzati + interdisciplinari, "\n")
+cat("   Percentuale:", round((specializzati + interdisciplinari) / totale * 100, 2), "%\n\n")
+
+# Statistiche Rao per paper interdisciplinari
+rao_interdisciplinari <- rao_values[rao_values > 0]
+
+cat("Statistiche Rao per paper INTERDISCIPLINARI (Rao > 0):\n")
+cat("   Min:", round(min(rao_interdisciplinari), 4), "\n")
+cat("   Max:", round(max(rao_interdisciplinari), 4), "\n")
+cat("   Media:", round(mean(rao_interdisciplinari), 4), "\n")
+cat("   Mediana:", round(median(rao_interdisciplinari), 4), "\n")
+cat("   Deviazione standard:", round(sd(rao_interdisciplinari), 4), "\n\n")
+
+# Distribuzione out-degree per tipo
+cat("Out-degree medio per tipo:\n")
+cat("   Paper specializzati:", round(mean(out_degrees[out_degrees > 0 & rao_values == 0]), 2), "\n")
+cat("   Paper interdisciplinari:", round(mean(out_degrees[rao_values > 0]), 2), "\n\n")
+
+cat("============================================================================\n")
+
+
+```
+Dunque sia i 1143 paper che non citano nessuno ed i 1265 paper che citano solo la propria categoria
+
+Dunque su 1565 paper che almeno 1 citazione ad un altro paper, solo 300 citano più (paper) di una categoria 
+
+
+Interpretazione dei valori : 
+
+  - Rao = 0: Paper che non cita nessuno, oppure cita solo paper di una categoria
+
+  - Rao basso (es. 0.1): Paper specializzato, cita principalmente categorie simili tra loro
+
+  - Rao medio (es. 0.3-0.5): Paper moderatamente interdisciplinare
+
+  - Rao alto (es. > 0.7): Paper fortemente interdisciplinare, cita molte categorie diverse e dissimili
+
+
+STEP 7 : Aggiungo RAO come attributo del grafo
+
+```{r}
+
+V(graph)$rao_entropy <- rao_values
+
+cat("  Attributo 'rao_entropy' aggiunto con successo\n\n")
+
+```
+STEP 8 : Top paper interdisciplinari
+
+```{r}
+
+# Ordina per Rao decrescente
+top_rao_idx <- order(rao_values, decreasing = TRUE)[1:min(10, length(rao_values))]
+
+top_rao_papers <- data.frame(
+  paper = names(rao_values)[top_rao_idx],
+  category = node_categories[top_rao_idx],
+  rao_entropy = rao_values[top_rao_idx],
+  out_degree = rowSums(A)[top_rao_idx],
+  stringsAsFactors = FALSE
+)
+
+print(top_rao_papers, row.names = FALSE)
+
+cat("\n")
+
+```
+  
+STEP 9 :  
+
+  * Top paper specializzati (Rao basso, ma con citazioni)
+  * TOP paper poco Interdisciplinari (Rao > 0, ma basso)
+  * Distribuzione per livello di interdisciplinarità
+
+```{r}
+
+# TOP 10 PAPER COMPLETAMENTE SPECIALIZZATI (Rao = 0)
+# Citano solo paper della propria categoria
+
+out_degrees <- degree(graph, mode = "out")
+specialized_idx <- which(out_degrees > 0 & rao_values == 0)
+
+if (length(specialized_idx) > 0) {
+  
+  # Ordina per out-degree decrescente (più citazioni = più specializzato)
+  top_specialized_idx <- specialized_idx[order(out_degrees[specialized_idx], decreasing = TRUE)[1:min(10, length(specialized_idx))]]
+  
+  specialized_papers <- data.frame(
+    paper = V(graph)$name[top_specialized_idx],
+    category = node_categories[top_specialized_idx],
+    rao_entropy = rao_values[top_specialized_idx],
+    out_degree = out_degrees[top_specialized_idx],
+    stringsAsFactors = FALSE
+  )
+  
+  # STAMPA la tabella con print()
+  print(kable(specialized_papers,
+              row.names = FALSE,
+              col.names = c("Paper", "Categoria", "Rao", "Out-degree")))
+ 
+  
+} else {
+  cat("Nessun paper completamente specializzato trovato.\n\n")
+}
+
+# TOP 10 PAPER POCO INTERDISCIPLINARI (Rao > 0, ma basso)
+# Citano principalmente una categoria, con poche eccezioni
+
+# Filtra paper con Rao > 0
+rao_with_cit <- rao_values[rao_values > 0]
+
+if (length(rao_with_cit) > 0) {
+  # Ordina per Rao crescente (valori più bassi = meno interdisciplinari)
+  bottom_rao_idx <- order(rao_with_cit)[1:min(10, length(rao_with_cit))]
+  
+  bottom_rao_papers <- data.frame(
+    paper = names(rao_with_cit)[bottom_rao_idx],
+    category = node_categories[match(names(rao_with_cit)[bottom_rao_idx], names(rao_values))],
+    rao_entropy = rao_with_cit[bottom_rao_idx],
+    out_degree = out_degrees[match(names(rao_with_cit)[bottom_rao_idx], names(rao_values))],
+    stringsAsFactors = FALSE
+  )
+  
+  # STAMPA la tabella con print()
+  print(kable(bottom_rao_papers,
+              row.names = FALSE,
+              digits = c(0, 0, 4, 0),
+              col.names = c("Paper", "Categoria", "Rao", "Out-degree")))
+  
+} else {
+  cat("Nessun paper con Rao > 0 trovato.\n\n")
+}
+
+
+# Confronto Statistico, distribuzione per livello di interdisciplinarità
+
+# Crea categorie di interdisciplinarità
+interdisciplinarity_levels <- data.frame(
+  Livello = c("Terminali (nessuna citazione)",
+              "Completamente specializzati (Rao = 0)",
+              "Poco interdisciplinari (0 < Rao ≤ 0.3)",
+              "Moderatamente interdisciplinari (0.3 < Rao ≤ 0.5)",
+              "Altamente interdisciplinari (Rao > 0.5)"),
+  Numero = c(
+    sum(out_degrees == 0),
+    sum(out_degrees > 0 & rao_values == 0),
+    sum(rao_values > 0 & rao_values <= 0.3),
+    sum(rao_values > 0.3 & rao_values <= 0.5),
+    sum(rao_values > 0.5)
+  ),
+  stringsAsFactors = FALSE
+)
+
+interdisciplinarity_levels$Percentuale <- round(interdisciplinarity_levels$Numero / vcount(graph) * 100, 2)
+
+print(kable(interdisciplinarity_levels,
+            row.names = FALSE,
+            col.names = c("Livello di Interdisciplinarità", "Numero Paper", "Percentuale (%)")))
+```
+
+    
+
+
+##  4 : Confronto tra Similarità e Centralità
+
+Domande di ricerca : 
+
+  * I paper con alta centralità (es. PageRank, betweenness) tendono ad essere interdisciplinari?
+
+  * I paper interdisciplinari sono più influenti nella rete?
+
+  * C'è correlazione tra Rao entropy e le varie misure di centralità?
+  
+  
+  
+Domanda 1 : I paper con alta centralità (es. PageRank, betweenness) tendono ad essere interdisciplinari?
+
+Procedimento : 
+
+  - Identifico i paper più centrali (top 10% per PageRank e Betweenness)
+
+  - Calcolo la distribuzione di Rao in questi paper centrali
+
+  - Si confrontano con la distribuzione generale
+
+  - Test statistico per verificare se c'è differenza significativa
+   
+```{r}
+
+# Crea dataframe completo
+df_analysis <- data.frame(
+  paper = V(graph)$name,
+  category = V(graph)$category,
+  rao_entropy = rao_values,
+  pagerank = V(graph)$pagerank,
+  betweenness = V(graph)$betweenness,
+  degree_out = degree(graph, mode = "out"),
+  stringsAsFactors = FALSE
+)
+
+# Filtra solo paper con citazioni out (altrimenti Rao = 0 per definizione)
+df_active <- df_analysis[df_analysis$degree_out > 0, ]
+
+cat("Dataset per l'analisi:\n")
+cat("  Paper totali:", nrow(df_analysis), "\n")
+cat("  Paper con citazioni out:", nrow(df_active), "\n")
+cat("  (Solo questi possono avere Rao > 0)\n\n")
+
+
+# ============================================================================
+# 1.1: Identificazione paper ad ALTA CENTRALITÀ
+# ============================================================================
+
+cat("----------------------------------------------------------------------------\n")
+cat("1.1 - Identificazione paper ad ALTA CENTRALITÀ\n")
+cat("----------------------------------------------------------------------------\n\n")
+
+# Definisci threshold per "alta centralità" (top 10%)
+threshold_pagerank <- quantile(df_active$pagerank, 0.90)
+threshold_betweenness <- quantile(df_active$betweenness, 0.90)
+
+# Classifica paper
+df_active$high_pagerank <- df_active$pagerank >= threshold_pagerank
+df_active$high_betweenness <- df_active$betweenness >= threshold_betweenness
+df_active$high_centrality <- df_active$high_pagerank | df_active$high_betweenness
+
+# Statistiche
+n_high_centrality <- sum(df_active$high_centrality)
+n_low_centrality <- sum(!df_active$high_centrality)
+
+cat("Paper ad ALTA centralità (top 10% PageRank o Betweenness):", n_high_centrality, "\n")
+cat("Paper a BASSA centralità:", n_low_centrality, "\n\n")
+
+cat("Threshold utilizzati:\n")
+cat("  PageRank >= ", format(threshold_pagerank, scientific = TRUE), "\n", sep = "")
+cat("  Betweenness >= ", round(threshold_betweenness, 4), "\n\n", sep = "")
+
+
+# ============================================================================
+# 1.2: Distribuzione Rao nei paper ad ALTA vs BASSA centralità
+# ============================================================================
+
+cat("----------------------------------------------------------------------------\n")
+cat("1.2 - Distribuzione Rao Entropy per livello di centralità\n")
+cat("----------------------------------------------------------------------------\n\n")
+
+# Separa i due gruppi
+high_centrality_papers <- df_active[df_active$high_centrality, ]
+low_centrality_papers <- df_active[!df_active$high_centrality, ]
+
+# Statistiche descrittive per ALTA centralità
+cat("Paper ad ALTA centralità (n =", nrow(high_centrality_papers), "):\n")
+cat("  Rao medio:", round(mean(high_centrality_papers$rao_entropy), 4), "\n")
+cat("  Rao mediano:", round(median(high_centrality_papers$rao_entropy), 4), "\n")
+cat("  Rao max:", round(max(high_centrality_papers$rao_entropy), 4), "\n")
+cat("  % con Rao > 0 (interdisciplinari):", 
+    round(sum(high_centrality_papers$rao_entropy > 0) / nrow(high_centrality_papers) * 100, 2), "%\n\n")
+
+# Statistiche descrittive per BASSA centralità
+cat("Paper a BASSA centralità (n =", nrow(low_centrality_papers), "):\n")
+cat("  Rao medio:", round(mean(low_centrality_papers$rao_entropy), 4), "\n")
+cat("  Rao mediano:", round(median(low_centrality_papers$rao_entropy), 4), "\n")
+cat("  Rao max:", round(max(low_centrality_papers$rao_entropy), 4), "\n")
+cat("  % con Rao > 0 (interdisciplinari):", 
+    round(sum(low_centrality_papers$rao_entropy > 0) / nrow(low_centrality_papers) * 100, 2), "%\n\n")
+
+
+```
+VISUALIZZAZIONE: Alta centralità → Maggiore interdisciplinarità
+
+```{r}
+
+
+# Prepara dati per il grafico (manualmente senza tidyr)
+prop_data <- data.frame(
+  Centralita = c("Alta", "Bassa"),
+  Interdisciplinari = c(34.24, 15.67),
+  Specializzati = c(65.76, 84.33)
+)
+
+# Reshape manuale (equivalente a pivot_longer)
+prop_data_long <- data.frame(
+  Centralita = rep(prop_data$Centralita, times = 2),
+  Tipo = rep(c("Interdisciplinari", "Specializzati"), each = 2),
+  Percentuale = c(prop_data$Interdisciplinari, prop_data$Specializzati)
+)
+
+# Crea barplot
+p1 <- ggplot(prop_data_long, aes(x = Centralita, y = Percentuale, fill = Tipo)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  geom_text(aes(label = paste0(round(Percentuale, 1), "%")),
+            position = position_dodge(width = 0.7),
+            vjust = -0.5, size = 4.5, fontface = "bold") +
+  scale_fill_manual(values = c("Interdisciplinari" = "#06D6A0", 
+                                "Specializzati" = "#EF476F")) +
+  labs(title = "Paper Interdisciplinari per Livello di Centralità",
+       subtitle = "I paper centrali hanno 2× più probabilità di essere interdisciplinari",
+       x = "Livello di Centralità",
+       y = "Percentuale (%)",
+       fill = "Tipo di Paper") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold", size = 16),
+        plot.subtitle = element_text(size = 12, color = "gray40"),
+        legend.position = "top") +
+  ylim(0, 100)
+
+print(p1)
+
+
+```
+
+
+
+Domanda 2 : I paper interdisciplinari (alto Rao da out-degree) sono più influenti (alto in-degree/PageRank) ?
+
+Definiamo questa "influenza" usando le metriche di centralità : PageRank, In-degree, Betweenness
+
+Confronto l'influenza tra paper interdisciplinari (Rao > 0) vs specializzati (Rao = 0)
+
+
+Stiamo misurando:
+
+  - Input diversity (Rao da out-degree): quanto sono diversificato in ciò che cito
+
+  - Output impact (Influenza da in-degree): quanto impatto ho sugli altri
+
+Queste due dimensioni insieme danno un quadro completo della posizione di un paper nella rete.
+
+Nota che  Katz e PageRank sono concettualmente simili, lasciamo fuori la Katz Ceantrality da questa analisi. 
+
+
+Recap :
+
+  - PageRank: "quanto sono importanti i miei citatori?"
+
+  - In-degree: "quante citazioni ricevo?"
+
+  - Betweenness: "quanto connetto parti diverse della rete?"
+  
+  
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Grafico 1 : Betweeness
+
+betw_data <- data.frame(
+  Tipo = factor(c("Interdisciplinari", "Specializzati"), 
+                levels = c("Specializzati", "Interdisciplinari")),
+  Betweenness = c(inter_betweenness, spec_betweenness),
+  Label = c(paste0(round(inter_betweenness, 1)), 
+            paste0(round(spec_betweenness, 1)))
+)
+
+p1 <- ggplot(betw_data, aes(x = Tipo, y = Betweenness, fill = Tipo)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = Label),
+            vjust = -0.5, size = 7, fontface = "bold") +
+  scale_fill_manual(values = c("Specializzati" = "#EF476F",
+                                "Interdisciplinari" = "#06D6A0")) +
+  labs(title = "Paper Interdisciplinari = PONTI tra Discipline",
+       subtitle = "Betweenness 10× più alta → ruolo critico di connettore",
+       x = "",
+       y = "Betweenness Centrality (media)") +
+  theme_minimal(base_size = 15) +
+  theme(plot.title = element_text(face = "bold", size = 18, hjust = 0.5),
+        plot.subtitle = element_text(size = 13, color = "gray40", hjust = 0.5),
+        legend.position = "none",
+        axis.text = element_text(size = 13, face = "bold")) +
+  annotate("segment", 
+           x = 1, xend = 2, 
+           y = max(betw_data$Betweenness) * 0.7,
+           yend = max(betw_data$Betweenness) * 0.7,
+           arrow = arrow(ends = "both", length = unit(0.3, "cm")),
+           color = "darkred", size = 1.2) +
+  annotate("text", 
+           x = 1.5, 
+           y = max(betw_data$Betweenness) * 0.75,
+           label = "10× più alta!", 
+           size = 6, 
+           fontface = "bold", 
+           color = "darkred")
+
+print(p1)
+
+
+# Grafico 2: Comparison table-style
+
+# Se gli specializzati hanno valore 100, quanto hanno gli interdisciplinari ?  
+comparison_data <- data.frame(
+  Metrica = rep(c("PageRank\n(Popolarità)", 
+                  "In-degree\n(Citazioni)", 
+                  "Betweenness\n(Ruolo ponte)"), each = 2),
+  Tipo = rep(c("Specializzati", "Interdisciplinari"), times = 3),
+  Valore_Norm = c(
+    # PageRank (normalizzato al valore specializzati = 100)
+    100, 72,
+    # In-degree
+    100, 95,
+    # Betweenness
+    100, 1119
+  )
+)
+
+comparison_data$Tipo <- factor(comparison_data$Tipo, 
+                                levels = c("Specializzati", "Interdisciplinari"))
+
+p2 <- ggplot(comparison_data, aes(x = Metrica, y = Valore_Norm, fill = Tipo)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "black", alpha = 0.5) +
+  geom_text(aes(label = ifelse(Valore_Norm > 150, Valore_Norm, "")),
+            position = position_dodge(width = 0.7),
+            vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("Specializzati" = "#EF476F",
+                                "Interdisciplinari" = "#06D6A0")) +
+  labs(title = "Confronto Multidimensionale: Interdisciplinari vs Specializzati",
+       subtitle = "Valori normalizzati (Specializzati = 100)",
+       x = "",
+       y = "Valore Relativo (Specializzati = 100)",
+       fill = "") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 12, color = "gray40", hjust = 0.5),
+        legend.position = "top",
+        axis.text.x = element_text(size = 11))
+
+print(p2)
+
+
+
+# Grafico 3: Focus solo sui paper interdisciplinari
+
+# Evidenzia solo gli interdisciplinari
+df_active$highlight <- df_active$tipo == "Interdisciplinare"
+
+p_highlight <- ggplot(df_active, aes(x = pagerank * 10000, 
+                                      y = betweenness)) +
+  # Prima layer: specializzati in grigio
+  geom_point(data = df_active[!df_active$highlight, ],
+             color = "gray70", shape = 16, size = 3, alpha = 0.4) +
+  
+  # Secondo layer: interdisciplinari colorati
+  geom_point(data = df_active[df_active$highlight, ],
+             aes(color = category),
+             shape = 15, size = 5, alpha = 0.9) +
+  
+  # CAMBIATO: Usa palette Set2
+  scale_color_brewer(palette = "Set2",
+                     name = "Categoria\n(Interdisciplinari)") +
+  
+  labs(title = "Paper Interdisciplinari: Ponti tra Discipline",
+       subtitle = "■ Colorati = Interdisciplinari | ● Grigi = Specializzati (background)",
+       x = "PageRank (×10000)",
+       y = "Betweenness Centrality") +
+  
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(face = "bold", size = 17, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, color = "gray40", hjust = 0.5),
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  ) +
+  
+  guides(color = guide_legend(override.aes = list(size = 6)))
+
+print(p_highlight)
+
+
+
+
+# Grafico 4 : Facet per categoria 
+
+# Se vuoi vedere ogni categoria separatamente
+p_facet <- ggplot(df_active, aes(x = pagerank * 10000, 
+                                  y = betweenness, 
+                                  color = tipo,
+                                  shape = tipo)) +
+  geom_point(alpha = 0.7, size = 3) +
+  
+  scale_color_manual(values = c("Specializzato" = "#EF476F", 
+                                 "Interdisciplinare" = "#06D6A0"),
+                     name = "") +
+  
+  scale_shape_manual(values = c("Specializzato" = 16, "Interdisciplinare" = 4),
+                     name = "") +
+  
+  facet_wrap(~ category, scales = "free", ncol = 3) +
+  
+  labs(title = "Paper Interdisciplinari per Categoria",
+       subtitle = "✕ = Interdisciplinare | ● = Specializzato",
+       x = "PageRank (×10000)",
+       y = "Betweenness") +
+  
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold", size = 16),
+        strip.text = element_text(face = "bold", size = 10),
+        legend.position = "top")
+
+print(p_facet)
+
+
+
+```
+
+I paper interdisciplinari (alto Rao da out-degree) sono più influenti (alto in-degree/PageRank) ?
+
+  - Se intendiamo influenza come PageRank/In-degree allora no, infatti gli specializzati sono PIÙ citati (+28% PageRank).
+
+  - Se intendiamo invece la Betweeness allora si, gli interdisciplinari hanno +1019% Betweenness.
+    Sono i PONTI che connettono discipline diverse, hanno un ruolo CRITICO per la circolazione delle idee.
+    
+
+
+Domanda 3 : Quali categorie producono i paper più interdisciplinari? E quali beneficiano di più dai ponti interdisciplinari?
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Interdisciplinarità per Categoria
+
+# 3.1: Rao medio per categoria 
+
+# Solo paper con citazioni out
+df_active <- df_analysis[df_analysis$degree_out > 0, ]
+
+# Aggrego per categoria
+category_stats <- df_active %>%
+  group_by(category) %>%
+  summarise(
+    n_papers = n(),
+    rao_medio = mean(rao_entropy),
+    perc_interdisciplinari = sum(rao_entropy > 0) / n() * 100,
+    # Rao medio SOLO tra interdisciplinari
+    rao_medio_inter = mean(rao_entropy[rao_entropy > 0]),
+    betweenness_medio = mean(betweenness)
+  ) %>%
+  arrange(desc(rao_medio))
+
+cat("Ranking categorie per interdisciplinarità:\n\n")
+print(kable(category_stats,
+            digits = c(0, 0, 4, 1, 4, 1),
+            col.names = c("Categoria", "N Paper", "Rao Medio (tutti)", 
+                         "% Interdisciplinari", "Rao Medio (inter)", "Betweenness Medio")))
+cat("\n")
+
+# Identifico tipi di categorie "ponte" vs "isola"
+most_interdisciplinary <- category_stats$category[1]
+least_interdisciplinary <- category_stats$category[nrow(category_stats)]
+
+cat("Categoria più INTERDISCIPLINARE:", most_interdisciplinary, "\n")
+cat("  - Rao medio:", round(category_stats$rao_medio[1], 3), "\n")
+cat("  -", round(category_stats$perc_interdisciplinari[1], 1), "% dei paper sono interdisciplinari\n\n")
+
+cat("Categoria più SPECIALIZZATA:", least_interdisciplinary, "\n")
+cat("  - Rao medio:", round(category_stats$rao_medio[nrow(category_stats)], 3), "\n")
+cat("  -", round(category_stats$perc_interdisciplinari[nrow(category_stats)], 1), "% dei paper sono interdisciplinari\n\n")
+
+
+# ============================================================================
+# 3.2: Visualizzazione - Barplot per categoria
+# ============================================================================
+
+
+# Barplot con % interdisciplinari
+p_categories <- ggplot(category_stats, 
+                       aes(x = reorder(category, perc_interdisciplinari), 
+                           y = perc_interdisciplinari,
+                           fill = perc_interdisciplinari)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  geom_text(aes(label = paste0(round(perc_interdisciplinari, 1), "%")),
+            hjust = -0.2, size = 4.5, fontface = "bold") +
+  scale_fill_gradient(low = "#EF476F", high = "#06D6A0",
+                      name = "% Interdisciplinari") +
+  coord_flip() +
+  labs(title = "Apertura Disciplinare: % Paper Interdisciplinari per Categoria",
+       subtitle = "Alcune discipline integrano più conoscenza esterna di altre",
+       x = "",
+       y = "% Paper Interdisciplinari (Rao > 0)") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold", size = 16),
+        plot.subtitle = element_text(size = 11, color = "gray40"),
+        legend.position = "none") +
+  ylim(0, max(category_stats$perc_interdisciplinari) * 1.15)
+
+print(p_categories)
+cat("\n")
+
+
+# ============================================================================
+# 3.3: SOLO citazioni CROSS-CATEGORIA (CORRETTO)
+# ============================================================================
+
+cat("3.3 - Pattern di Citazioni CROSS-Categoria\n")
+cat("----------------------------------------------------------------------------\n\n")
+
+# Filtra solo paper interdisciplinari
+interdisciplinary_papers <- df_active[df_active$rao_entropy > 0, ]
+
+cat("Analisi su", nrow(interdisciplinary_papers), "paper interdisciplinari\n\n")
+
+# Per ogni paper interdisciplinare, guarda chi cita
+cross_citations <- data.frame()
+
+for (i in 1:nrow(interdisciplinary_papers)) {
+  paper_idx <- which(V(graph)$name == interdisciplinary_papers$paper[i])
+  cited_indices <- which(A[paper_idx, ] > 0)
+  
+  if (length(cited_indices) > 0) {
+    source_cat <- interdisciplinary_papers$category[i]
+    target_cats <- node_categories[cited_indices]
+    
+    # SOLO citazioni cross-category (from ≠ to)
+    for (target_cat in unique(target_cats)) {
+      if (source_cat != target_cat) {  # ← FILTRO AGGIUNTO
+        n_cit <- sum(target_cats == target_cat)
+        cross_citations <- rbind(cross_citations, 
+                                 data.frame(from = source_cat,
+                                           to = target_cat,
+                                           weight = n_cit))
+      }
+    }
+  }
+}
+
+# Aggrego
+cross_summary <- cross_citations %>%
+  group_by(from, to) %>%
+  summarise(total_citations = sum(weight)) %>%
+  arrange(desc(total_citations))
+
+cat("Top 10 flussi di citazioni CROSS-categoria (from ≠ to):\n\n")
+print(kable(head(cross_summary, 10),
+            col.names = c("Da Categoria", "A Categoria", "N Citazioni")))
+cat("\n")
+
+# Statistiche aggregate
+cat("Statistiche citazioni cross-categoria:\n")
+cat("  Totale citazioni cross:", sum(cross_summary$total_citations), "\n")
+cat("  Numero di coppie (from→to):", nrow(cross_summary), "\n")
+cat("  Media citazioni per coppia:", round(mean(cross_summary$total_citations), 1), "\n\n")
+
+
+
+# 3.4: Chi è il maggior ESPORTATORE vs IMPORTATORE?
+
+
+cat("3.4 - Ruolo delle Categorie nel Network\n")
+cat("----------------------------------------------------------------------------\n\n")
+
+# Calcola out-flow (quanto esporta) e in-flow (quanto importa)
+export_summary <- cross_summary %>%
+  group_by(from) %>%
+  summarise(citazioni_out = sum(total_citations)) %>%
+  rename(category = from)
+
+import_summary <- cross_summary %>%
+  group_by(to) %>%
+  summarise(citazioni_in = sum(total_citations)) %>%
+  rename(category = to)
+
+trade_balance <- merge(export_summary, import_summary, by = "category", all = TRUE)
+trade_balance[is.na(trade_balance)] <- 0
+trade_balance$balance <- trade_balance$citazioni_out - trade_balance$citazioni_in
+trade_balance <- trade_balance %>% arrange(desc(balance))
+
+print(kable(trade_balance,
+            col.names = c("Categoria", "Esporta (cita out)", "Importa (citata da)", "Bilancia"),
+            digits = 0))
+
+cat("Interpretazione:\n")
+cat("  - balance POSITIVO: categoria 'esporta' più idee verso altre discipline\n")
+cat("  - balance NEGATIVO: categoria 'importa' più idee da altre discipline\n\n")
+
+
+# ============================================================================
+# 3.5: CONCLUSIONE
+# ============================================================================
+
+
+most_open <- category_stats$category[1]
+most_closed <- category_stats$category[nrow(category_stats)]
+top_bridge <- cross_summary$from[1]
+
+
+cat("1. APERTURA DISCIPLINARE:\n")
+cat("   - Più aperta:", most_open, 
+    "(", round(category_stats$perc_interdisciplinari[1], 1), "% interdisciplinari )\n")
+cat("   - Più chiusa:", most_closed,
+    "(", round(category_stats$perc_interdisciplinari[nrow(category_stats)], 1), "% interdisciplinari )\n\n")
+
+cat("2. FLUSSI INTERDISCIPLINARI:\n")
+cat("   - Flusso principale:", cross_summary$from[1], "→", cross_summary$to[1],
+    "(", cross_summary$total_citations[1], "citazioni cross )\n")
+cat("   - Totale citazioni cross-disciplinari:", sum(cross_summary$total_citations), "\n\n")
+
+cat("3. RUOLI NEL NETWORK:\n")
+cat("   - Maggior esportatore:", trade_balance$category[1],
+    "(balance +", trade_balance$balance[1], ")\n")
+cat("   - Maggior importatore:", trade_balance$category[nrow(trade_balance)],
+    "(balance", trade_balance$balance[nrow(trade_balance)], ")\n\n")
+
+
+```
+
+- Ne concludo che la categoria :
+    
+  - Più aperta è la Theory ( 30.9 % interdisciplinari )
+  
+  - Più chiusa è la Genetic_Algorithms ( 10.6 % interdisciplinari )
+
+- Flusso principale: Theory → Neural_Networks ( 82 citazioni  )
+
+   - Totale citazioni cross-disciplinari: 874 
+
+- Maggior esportatore in proporzione 
+
+   - quella che Cita maggiormente in proporzione : Theory (bilancia + 72 )
+   - quella che viene Citata maggiormente in proporzione : Case_Based (bilancia -43 )
+
+
+Le discipline non sono ugualmente 'aperte'. Alcune (come Theory) integrano attivamente conoscenza da altri campi.
+Altre invece (come Genetic_Algorithms) rimangono più isolate. 
+
+Questo riflette differenze epistemiche e metodologiche.
 
 ```{r}
 
 
 ```
 
-##  5 : Confronto tra Similarità e Centralità
+```{r}
+
+
+```

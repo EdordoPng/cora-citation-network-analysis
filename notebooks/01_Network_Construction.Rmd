@@ -226,7 +226,7 @@ out_deg <- degree(graph_igraph, mode = "out")
 # Paper con più citazioni fatte
 top_citers <- data.frame( paper_id = names(out_deg), outdegree = as.numeric(out_deg)) %>% 
   arrange(desc(outdegree)) %>% 
-  head(10)
+  head(310)
 
 print(top_citers)
 
