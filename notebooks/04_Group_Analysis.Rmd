@@ -1,0 +1,86 @@
+---
+title: "Group Analysis"
+author: "Edoardo Diana"
+date: "2025-11-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+Community detection e Clustring
+
+Modularità
+
+SPectral Modularity maximization 
+
+Modi di ottimizzazzione della modularity (Algoritmi di Community Detection)
+
+  - Edge Betweenness
+  - Random Walks
+  - Statistical meachanics
+  - Label Propagation
+  - Infomap community finding
+  - Ottimizzazione Modularità Multi-level 
+  - Optimal Community Score
+
+Clustering Gerarchico
+
+
+Confronto con Ground Truth (Categorie Cora)
+
+Domande chiave:
+
+  A. Le communities coincidono con le categorie scientifiche?
+
+  B. Quali categorie sono "pure" (una sola community)?
+
+  C. Quali categorie sono frammentate (multiple communities)?
+
+## 1 Carico le librerie ed il grafo
+
+H oottenuto il grafo dal notebook precedente.
+
+```{r}
+library(igraph)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+```
+
+```{r}
+# Caricare grafo con Rao dal notebook 03
+load("../data/processed/graph_with_rao.RData")
+
+cat("Grafo caricato:\n")
+cat(" Nodi:", vcount(graph), "\n")
+cat(" Archi:", ecount(graph), "\n")
+cat(" Categorie ground-truth:", length(unique(V(graph)$category)), "\n")
+
+```
+
+Le community sono gruppi di nodi densamente connessi.
+
+La Modularity Q misura la qualità della partizione.
+
+
+
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+
