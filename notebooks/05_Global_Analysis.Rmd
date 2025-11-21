@@ -13,13 +13,13 @@ Carchiamo qui dei pattern ricorrenti nelle strutture dele networks.
 
 Essi hanno un effetto determinante su come il networked system lavora :
 
-- Connected components and Giant componnts
+  - Connected components and Strongly Connected components 
 
-- Path lengths and the Small-world effect
+  - Path lengths and the Small-world effect
 
-- Motifs
+  - Motifs
 
-- Assortative Mixing
+  - Assortative Mixing
 
 ## Connected Component
 
@@ -33,3 +33,8 @@ Il Giant Component riempie la maggior parte della rete.
 
 Formano una partizione del set dei vertici e definiscono una relazione di equivalenza tra nodi.
 
+### Conclusione
+
+In questo caso stiamo lavorando con una citation network, la quale è una rete aciclica.
+
+Le reti aciclinche non hanno strongly connected components di dimensione maggiore di 1.

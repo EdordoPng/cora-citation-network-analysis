@@ -1472,7 +1472,7 @@ cat("  % con Rao > 0 (interdisciplinari):",
 ```
 Grafico : Alta centralità → Maggiore interdisciplinarità
 
-```{r}
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
 
 # Prepara dati per il grafico (manualmente senza tidyr)
 prop_data <- data.frame(
