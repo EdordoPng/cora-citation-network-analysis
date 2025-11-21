@@ -1,0 +1,35 @@
+---
+title: "Global Analysis"
+author: "Edoardo Diana"
+date: "2025-11-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Carchiamo qui dei pattern ricorrenti nelle strutture dele networks.
+
+Essi hanno un effetto determinante su come il networked system lavora :
+
+- Connected components and Giant componnts
+
+- Path lengths and the Small-world effect
+
+- Motifs
+
+- Assortative Mixing
+
+## Connected Component
+
+La componente connessa di un grafo non dirtto è il set massimo di nodi tale che ogni coppia di nodi è connessa da un path.
+
+Il Giant Component riempie la maggior parte della rete.
+
+## Strongly Connected Components
+
+2 nodi sono nello stesso Strongly Connected Components se sono a vicendnda raggiungibili mediante un directed path.
+
+Formano una partizione del set dei vertici e definiscono una relazione di equivalenza tra nodi.
+
