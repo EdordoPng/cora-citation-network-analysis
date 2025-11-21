@@ -13,22 +13,26 @@ Community detection e Clustring
 
 Modularità
 
-SPectral Modularity maximization 
 
-Modi di ottimizzazzione della modularity (Algoritmi di Community Detection)
+Modi di ottimizzazzione della modularity (Algoritmi di Community Detection) :
 
-  - Edge Betweenness
-  - Random Walks
-  - Statistical meachanics
+  - Spectral Modularity maximization                  
+  - Louvain     
+  
+        Grafo : Network con raggruppamento ottenuto
+        Grafo : Confronto con Ground Truth (Categorie CoraNetwork)
+
+  - Edge Betweenness                                  
+  - Random Walks                                      
+  - Statistical meachanics                            
   - Label Propagation
   - Infomap community finding
-  - Ottimizzazione Modularità Multi-level 
-  - Optimal Community Score
+
+
 
 Clustering Gerarchico
 
 
-Confronto con Ground Truth (Categorie Cora)
 
 Domande chiave:
 
@@ -45,7 +49,9 @@ H oottenuto il grafo dal notebook precedente.
 ```{r}
 library(igraph)
 library(ggplot2)
+library(ggraph)
 library(dplyr)
+library(tidygraph)
 library(knitr)
 ```
 
@@ -60,13 +66,557 @@ cat(" Categorie ground-truth:", length(unique(V(graph)$category)), "\n")
 
 ```
 
+## Community Detection e Clustering
+
+Il Community Detection è il problema di trovare una divisione naturale della rete in comunintà.
+
 Le community sono gruppi di nodi densamente connessi.
 
-La Modularity Q misura la qualità della partizione.
+A priori non sappiammo ne i gruppi ne il numero dei gruppi, ne veniamo a capo con un algoritmo.
 
 
 
 
+```{r}
+
+```
+
+## Modularità 
+
+La Modularity Q misura la qualità della partizione (quanto bene una rete è divisa in communità).
+
+E' un numero che quantifica la proprietà di avete tanti edge intra-gruppo e poche inter-gruppo.
+Noi vogliamo cercare di massimizzarla.
+
+Questa è la Modularity matrix Q :
+
+$$
+Q = \frac{1}{2m} \sum_{ij} \left(A_{ij} - \frac{k_i k_j}{2m}\right) \delta(c_i, c_j)
+$$
+
+
+Dove:
+
+  * A_{ij} = matrice di adiacenza
+  * k_i, k_j = gradi dei nodi
+  * m = numero di archi
+  * delta(c_i, c_j) = 1 se i e j nella stessa community, 0 altrimenti.
+
+Ogni componente della matrice di modularità ha quella differenza tra i rispettivi nodi i e j scelti.
+
+
+Poichè cercare di massimizzare la modularità è un Computationally hard probelm, serve ricorrere ad Heuristic Algorithms.
+Cercano di massimizzare la modularità in modi intelligenti
+
+## Heuristic Algorithms
+
+Lavoriamo su un insieme di nodi minore dell'originale perchè troppo sparsi
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# ============================================================================
+# FILTRAGGIO GRAFO - Nodi ben connessi
+# ============================================================================
+
+cat("========================================\n")
+cat("FILTRAGGIO NODI\n")
+cat("========================================\n\n")
+
+# Calcola degree totale (in + out)
+total_degree <- V(graph)$indegree + V(graph)$outdegree
+
+# Soglia minima
+min_degree <- 5
+
+# Identifica nodi da mantenere
+keep_nodes <- which(total_degree >= min_degree)
+
+cat("Filtro applicato:\n")
+cat("  Degree minimo (in+out): >=", min_degree, "\n")
+cat("  Nodi mantenuti:", length(keep_nodes), 
+    paste0("(", round(length(keep_nodes) / vcount(graph) * 100, 1), "%)"), "\n")
+cat("  Nodi rimossi:", vcount(graph) - length(keep_nodes), 
+    paste0("(", round((vcount(graph) - length(keep_nodes)) / vcount(graph) * 100, 1), "%)"), "\n\n")
+
+# Crea sottografo filtrato
+graph_filtered <- induced_subgraph(graph, keep_nodes)
+
+cat("Sottografo filtrato:\n")
+cat("  Nodi:", vcount(graph_filtered), "\n")
+cat("  Archi:", ecount(graph_filtered), "\n")
+cat("  Densità:", round(ecount(graph_filtered) / (vcount(graph_filtered) * (vcount(graph_filtered) - 1) / 2), 4), "\n\n")
+
+cat("========================================\n\n")
+
+
+```
+
+
+
+## Esecuzione dei Community Detection Algorithms sulla rete
+
+```{r}
+
+# Converti in non-diretto (collassa archi bidirezionali)
+graph_filtered <- as.undirected(graph_filtered, mode = "collapse")
+
+cat("Grafo convertito:\n")
+cat("  Nodi:", vcount(graph_filtered), "\n")
+cat("  Archi:", ecount(graph_filtered), "\n")
+cat("  Densità:", round(ecount(graph_filtered) / (vcount(graph_filtered) * (vcount(graph_filtered) - 1) / 2), 4), "\n")
+cat("  Diretto:", is_directed(graph_filtered), "\n\n")
+
+cat("========================================\n\n")
+
+# Lista degli algoritmi di community detection
+methods <- list(
+  "Edge Betweenness" = cluster_edge_betweenness,
+  "Fast Greedy" = cluster_fast_greedy,
+  "Label Propagation" = cluster_label_prop,
+  "Leading Eigenvector" = cluster_leading_eigen,
+  "Louvain" = cluster_louvain,
+  "Walktrap" = cluster_walktrap,
+  "Infomap" = cluster_infomap
+)
+
+# Dataframe per i risultati
+results <- data.frame(
+  Method = character(), 
+  Communities = integer(),
+  Modularity = numeric(), 
+  Time_seconds = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Esegui ogni algoritmo
+for (method in names(methods)) {
+  cat("  -", method, "... ")
+  
+  tryCatch({
+    # Misura tempo di esecuzione
+    start_time <- Sys.time()
+    
+    # Detect communities
+    set.seed(42)  # Per riproducibilità
+    communities <- methods[[method]](graph_filtered)
+    
+    end_time <- Sys.time()
+    time_taken <- as.numeric(difftime(end_time, start_time, units = "secs"))
+    
+    # Calcola modularity
+    modularity_value <- modularity(communities)
+    n_communities <- length(communities)
+    
+    # Salva risultati
+    results <- rbind(results, data.frame(
+      Method = method, 
+      Communities = n_communities,
+      Modularity = modularity_value,
+      Time_seconds = time_taken
+    ))
+    
+    cat("OK (Q =", round(modularity_value, 4), ")\n")
+    
+  }, error = function(e) {
+    cat("ERRORE:", e$message, "\n")
+  })
+}
+ 
+
+# Ordina per modularity decrescente
+results <- results[order(-results$Modularity), ]
+
+# Crea tabella formattata con kable
+kable(results, 
+      digits = c(0, 0, 4, 3),
+      col.names = c("Algoritmo", "Communities", "Modularity Q", "Tempo (sec)"),
+      caption = "Confronto algoritmi di community detection")
+
+cat("\n========================================\n\n")
+
+# Statistiche
+cat("Miglior algoritmo (Modularity):", results$Method[1], 
+    paste0("(Q = ", round(results$Modularity[1], 4), ")"), "\n")
+cat("Algoritmo più veloce:", results$Method[which.min(results$Time_seconds)],
+    paste0("(", round(min(results$Time_seconds), 3), " sec)"), "\n")
+cat("Algoritmo più lento:", results$Method[which.max(results$Time_seconds)],
+    paste0("(", round(max(results$Time_seconds), 3), " sec)"), "\n\n")
+
+
+
+
+```
+
+
+### 1. Spectral Modularity Maximization
+
+Massimizza la Modularità Q sfruttando proprietà spettrali della Modularity matrix B.
+
+Divido la mia comunità in 2 gruppi:
+
+  * si = 1 se i appartiene al gruppo 1
+  * si = -1 se i appartiene al gruppo 2
+
+Purtroppo non va bene per grafi come quello che abbiamo noi. 
+
+
+
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+
+
+
+
+```
+
+### Louvain
+
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+cat("========================================\n")
+cat("LOUVAIN - Sottografo filtrato\n")
+cat("========================================\n\n")
+
+# Applica Louvain sul sottografo
+set.seed(42)
+louvain_filtered <- cluster_louvain(graph_filtered)
+
+cat("Risultati Louvain (sottografo):\n")
+cat("  Communities trovate:", length(louvain_filtered), "\n")
+cat("  Modularity Q:", round(modularity(louvain_filtered), 4), "\n\n")
+
+# Distribuzione dimensioni
+filtered_sizes <- sort(table(membership(louvain_filtered)), decreasing = TRUE)
+
+cat("Distribuzione dimensioni communities:\n")
+print(filtered_sizes)
+cat("\n")
+
+cat("Statistiche:\n")
+cat("  Dimensione media:", round(mean(filtered_sizes), 1), "nodi\n")
+cat("  Dimensione mediana:", median(filtered_sizes), "nodi\n")
+cat("  Community più grande:", max(filtered_sizes), "nodi\n")
+cat("  Community più piccola:", min(filtered_sizes), "nodi\n\n")
+
+# Aggiungi membership al sottografo
+V(graph_filtered)$community <- membership(louvain_filtered)
+
+
+
+# Converti sottografo in tidygraph
+graph_tidy <- as_tbl_graph(graph_filtered) %>%
+  mutate(community = as.factor(community))
+
+
+# Layout
+set.seed(42)
+
+# Crea plot con ggraph
+p <- ggraph(graph_tidy, layout = 'fr') +
+  # Archi
+  geom_edge_link(aes(), 
+                 color = "gray80", 
+                 width = 0.2, 
+                 alpha = 0.3) +
+  # Nodi
+  geom_node_point(aes(color = community), 
+                  size = 2.5, 
+                  alpha = 0.8) +
+  # Tema e stile
+  scale_color_viridis_d(option = "turbo", name = "Community") +
+  labs(title = "Louvain Community Detection (grafo filtrato)",
+       subtitle = paste0(vcount(graph_filtered), " nodi (degree ≥", min_degree, ") | ",
+                        length(louvain_filtered), " communities, Q = ", 
+                        round(modularity(louvain_filtered), 3))) +
+  theme_graph(base_family = "sans") +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 9, face = "bold"),
+        legend.text = element_text(size = 7),
+        legend.key.size = unit(0.4, "cm"),     # Elementi più piccoli
+        legend.box.spacing = unit(0.1, "cm"),  # Meno spazio sopra
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size = 11, hjust = 0.5)) +
+  guides(color = guide_legend(nrow = 2, byrow = TRUE))  # Massimo 2 righe
+
+# Mostra plot
+print(p)
+
+
+# ============================================================================
+# Visualizzazione Ground-Truth (categorie)
+# ============================================================================
+
+# Converti sottografo in tidygraph con categorie
+graph_tidy_cat <- as_tbl_graph(graph_filtered) %>%
+  mutate(category = as.factor(category))
+
+
+# Usa STESSO layout del primo grafico per confronto diretto
+set.seed(42)
+
+# Crea plot con ggraph (colori = categorie)
+p_cat <- ggraph(graph_tidy_cat, layout = 'fr') +
+  # Archi
+  geom_edge_link(aes(), 
+                 color = "gray80", 
+                 width = 0.2, 
+                 alpha = 0.3) +
+  # Nodi (colore = categoria)
+  geom_node_point(aes(color = category), 
+                  size = 2.5, 
+                  alpha = 0.8) +
+  # Tema e stile
+  scale_color_brewer(palette = "Set2", name = "Categoria") +
+  labs(title = "Ground-Truth Categories (grafo filtrato)",
+       subtitle = paste0(vcount(graph_filtered), " nodi (degree ≥", min_degree, ") | ",
+                        length(unique(V(graph_filtered)$category)), " categorie Cora")) +
+  theme_graph(base_family = "sans") +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.text = element_text(size = 9),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size = 11, hjust = 0.5))
+
+print(p_cat)
+
+
+```
+
+
+
+
+### 3. Label Propagation
+
+Ad ogni nodo viene assegnata 1 di k etichette.
+Il metodo poi procede iterativamente a reassegnare le etichette.
+
+Si ferma quando l'etichetta di ogni nodo è una delle etichette più freuqneti nel suo vicinato.
+
+Putroppo il problema di questo algoritmo è che su grafi diretti può non convergere e andare in loop infinito.
+
+```{r}
+
+
+```
+
+### 4. Cluster Infomap
+
+Tenta di creare un raggruppamento che fornisca la "shortest description length" per una random walk sul grafo.
+
+La lunghezza della descrizione è misurata mediante il numero atteso di bit per vertice che son richiesti per codificare il percorso di una random walk.
+
+Un random walker che "naviga" seguendo le citazioni tenderà a rimanere all'interno di gruppi di paper tematicamente correlati.
+
+Putroppo facevo varie prove questo algorimo identifica comunque troppe categorie, dunque inapplicabile per questo grafo diretto.
+
+```{r}
+
+
+```
+
+
+## Clustering Gerarchico
+
+L'idea è che se ho dei punti in uno spazio, posso far dei cluster considerando la distanza euclidea.
+
+Definisce una misura della forza della connessione tra nodi, basata sulla struttura della rete.
+
+Ogni nodo parte in un proprio gruppo, poi si joina in un gruppo solo quelle coppie di nodi con la similarità più alta.
+Poi farò delle join con i gruppi che son più simili.
+
+Nota che dopo aver unito 2 gruppi, serve ricalcolare le metriche in merito alla distanza.
+
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+# ============================================================================
+# HIERARCHICAL CLUSTERING
+# ============================================================================
+
+cat("========================================\n")
+cat("HIERARCHICAL CLUSTERING\n")
+cat("========================================\n\n")
+
+cat("Metodo: Agglomerative hierarchical clustering\n")
+cat("Basato su misure di similarità tra nodi.\n\n")
+
+# Matrice di adiacenza
+A <- as_adjacency_matrix(graph_filtered, sparse = FALSE)
+
+cat("Matrice di adiacenza:\n")
+cat("  Dimensione:", nrow(A), "×", ncol(A), "\n")
+cat("  Densità:", round(sum(A) / (nrow(A) * ncol(A)), 4), "\n\n")
+
+# ============================================================================
+# Similarità Coseno (con gestione nodi isolati)
+# ============================================================================
+
+cat("Calcolo similarità coseno...\n\n")
+
+# Funzione distanza euclidea per normalizzazione
+euclidean <- function(x) sqrt(sum(x * x))
+
+# Calcola norma di ogni colonna (nodo)
+d <- apply(A, 2, euclidean)
+
+# Identifica nodi con norma zero (isolati)
+zero_degree <- which(d == 0)
+
+if (length(zero_degree) > 0) {
+  cat("ATTENZIONE: Trovati", length(zero_degree), "nodi con degree 0.\n")
+  cat("Questi nodi verranno rimossi prima del clustering.\n\n")
+  
+  # Rimuovi nodi isolati
+  A <- A[-zero_degree, -zero_degree]
+  d <- d[-zero_degree]
+  
+  cat("Matrice ridotta:\n")
+  cat("  Dimensione:", nrow(A), "×", ncol(A), "\n\n")
+}
+
+# Matrice diagonale delle norme inverse (evita divisione per zero)
+D <- diag(1 / d)
+
+# Similarità coseno: S = D * A^T * A * D
+S_cosine <- D %*% t(A) %*% A %*% D
+
+# Forza diagonale a 1 (similarità di un nodo con se stesso)
+diag(S_cosine) <- 1
+
+# Converti similarità in distanza
+D_cosine <- 1 - S_cosine
+
+# Gestisci eventuali valori negativi da errori numerici
+D_cosine[D_cosine < 0] <- 0
+
+# Assicurati che sia simmetrica
+D_cosine <- (D_cosine + t(D_cosine)) / 2
+
+# Converti in oggetto dist
+dist_cosine <- as.dist(D_cosine)
+
+# Verifica presenza di NA/NaN/Inf
+if (any(is.na(dist_cosine)) || any(is.infinite(dist_cosine))) {
+  cat("ERRORE: Valori NA/NaN/Inf nella matrice distanza!\n")
+  cat("Sostituisco con valori validi...\n\n")
+  
+  # Sostituisci NA con distanza massima
+  dist_matrix <- as.matrix(dist_cosine)
+  dist_matrix[is.na(dist_matrix)] <- max(dist_matrix[!is.na(dist_matrix)])
+  dist_matrix[is.infinite(dist_matrix)] <- max(dist_matrix[!is.infinite(dist_matrix)])
+  dist_cosine <- as.dist(dist_matrix)
+}
+
+cat("Similarità coseno calcolata.\n")
+cat("Range distanze:", round(range(dist_cosine), 3), "\n")
+cat("Valori NA:", sum(is.na(dist_cosine)), "\n")
+cat("Valori Inf:", sum(is.infinite(dist_cosine)), "\n\n")
+
+# ============================================================================
+# Average-linkage clustering
+# ============================================================================
+
+cat("Esecuzione hierarchical clustering (average-linkage)...\n\n")
+
+# Clustering gerarchico
+hc_cosine <- hclust(dist_cosine, method = "average")
+
+cat("Clustering completato.\n")
+cat("Metodo linkage: average\n")
+cat("Altezza massima:", round(max(hc_cosine$height), 3), "\n\n")
+
+# ============================================================================
+# Dendrogramma
+# ============================================================================
+
+# ============================================================================
+# Dendrogramma - Solo struttura principale
+# ============================================================================
+
+cat("Creazione dendrogramma struttura principale...\n\n")
+
+# Converti in dendrogram
+dend <- as.dendrogram(hc_cosine)
+
+# Taglia a un'altezza intermedia per mostrare solo struttura alta
+cut_height_display <- 0.7  # Mostra solo fusioni sopra questa altezza
+
+# Taglia dendrogram
+dend_cut <- cut(dend, h = cut_height_display)
+
+# Plot del dendrogram alto (upper)
+par(mar = c(4, 4, 3, 2))
+plot(dend_cut$upper, 
+     main = paste0("Dendrogramma - Struttura principale\n(altezza > ", cut_height_display, ")"),
+     xlab = "",
+     ylab = "Distanza (1 - Cosine Similarity)",
+     nodePar = list(pch = 19, cex = 0.8, col = "steelblue"))
+
+# Linea per k clusters
+cut_height_k <- hc_cosine$height[length(hc_cosine$height) - k_clusters + 1]
+if (cut_height_k > cut_height_display) {
+  abline(h = cut_height_k, col = "red", lty = 2, lwd = 2)
+  text(x = 2, y = cut_height_k + 0.01,
+       labels = paste0("k = ", k_clusters), col = "red", cex = 1)
+}
+
+cat("Dendrogramma struttura principale creato.\n")
+cat("Mostra solo fusioni con altezza >", cut_height_display, "\n\n")
+
+# ============================================================================
+# Estrazione clusters
+# ============================================================================
+
+cat("========================================\n")
+cat("ESTRAZIONE CLUSTERS\n")
+cat("========================================\n\n")
+
+# Taglia dendrogramma a k clusters
+clusters_hc <- cutree(hc_cosine, k = k_clusters)
+
+# Mappa clusters ai nodi originali (se alcuni erano stati rimossi)
+if (length(zero_degree) > 0) {
+  # Crea vettore completo
+  clusters_full <- rep(NA, vcount(graph_filtered))
+  clusters_full[-zero_degree] <- clusters_hc
+  
+  # Assegna nodi isolati a cluster separato
+  clusters_full[zero_degree] <- k_clusters + 1
+  
+  V(graph_filtered)$cluster_hc <- clusters_full
+  
+  cat("Nodi isolati assegnati a cluster", k_clusters + 1, "\n\n")
+} else {
+  V(graph_filtered)$cluster_hc <- clusters_hc
+}
+
+# Statistiche
+cluster_sizes <- sort(table(V(graph_filtered)$cluster_hc), decreasing = TRUE)
+
+cat("Clusters estratti (k =", k_clusters, "):\n\n")
+cat("Distribuzione dimensioni:\n")
+print(cluster_sizes)
+cat("\n")
+
+cat("Statistiche:\n")
+cat("  Dimensione media:", round(mean(cluster_sizes), 1), "nodi\n")
+cat("  Dimensione mediana:", median(cluster_sizes), "nodi\n")
+cat("  Cluster più grande:", max(cluster_sizes), "nodi\n")
+cat("  Cluster più piccolo:", min(cluster_sizes), "nodi\n\n")
+
+# Calcola modularity
+hc_communities <- make_clusters(graph_filtered, membership = V(graph_filtered)$cluster_hc)
+hc_modularity <- modularity(hc_communities)
+
+cat("Modularity Q:", round(hc_modularity, 4), "\n\n")
+
+cat("========================================\n\n")
+
+```
+Purtroppo questo non ha una modularità alta, ma solo Modularity Q: 0.0465 
 
 ```{r}
 
@@ -77,10 +627,335 @@ La Modularity Q misura la qualità della partizione.
 
 ```
 
+## Domanda A
 
-```{r}
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+# ============================================================================
+# B. GRANULARITÀ OTTIMALE
+# ============================================================================
+
+cat("========================================\n")
+cat("B. GRANULARITÀ OTTIMALE\n")
+cat("========================================\n\n")
+
+cat("Domanda: 7 categorie vs 34 communities - quale risoluzione\n")
+cat("cattura meglio la struttura della rete?\n\n")
+
+# ESTRAI dati dal grafo
+communities_best <- V(graph_filtered)$community  # Membership Louvain
+categories <- V(graph_filtered)$category         # Categorie ground-truth
+
+# Verifica che esistano
+if (is.null(communities_best) || is.null(categories)) {
+  cat("ERRORE: Aggiungi prima le communities al grafo!\n")
+  cat("Esegui: V(graph_filtered)$community <- membership(louvain_filtered)\n\n")
+  stop("Dati mancanti")
+}
+
+# Calcola modularity per diversi livelli di granularità
+granularity_results <- data.frame(
+  K = integer(),
+  Source = character(),
+  Modularity = numeric(),
+  Avg_size = numeric(),
+  Min_size = integer(),
+  Max_size = integer(),
+  stringsAsFactors = FALSE
+)
+
+# 1. Ground-truth (7 categorie)
+cat_membership <- as.numeric(factor(categories))
+cat_communities <- make_clusters(graph_filtered, membership = cat_membership)
+cat_modularity <- modularity(cat_communities)
+cat_sizes <- table(cat_membership)
+
+granularity_results <- rbind(granularity_results, data.frame(
+  K = length(unique(cat_membership)),
+  Source = "Ground-Truth (Categorie)",
+  Modularity = round(cat_modularity, 4),
+  Avg_size = round(mean(cat_sizes), 1),
+  Min_size = min(cat_sizes),
+  Max_size = max(cat_sizes)
+))
+
+# 2. Louvain (communities già calcolate)
+louv_communities <- make_clusters(graph_filtered, membership = communities_best)
+louv_modularity <- modularity(louv_communities)
+louv_sizes <- table(communities_best)
+
+granularity_results <- rbind(granularity_results, data.frame(
+  K = length(unique(communities_best)),
+  Source = "Louvain (ottimale)",
+  Modularity = round(louv_modularity, 4),
+  Avg_size = round(mean(louv_sizes), 1),
+  Min_size = min(louv_sizes),
+  Max_size = max(louv_sizes)
+))
+
+# 3. Louvain forzato a k≈7
+cat("Calcolo Louvain con k≈7...\n")
+
+target_k <- 7
+resolution_values <- seq(0.2, 2.0, by = 0.2)
+best_diff <- Inf
+best_louv_k7 <- NULL
+
+for (res in resolution_values) {
+  set.seed(42)
+  test_louv <- cluster_louvain(graph_filtered, resolution = res)
+  k_test <- length(test_louv)
+  
+  if (abs(k_test - target_k) < best_diff) {
+    best_diff <- abs(k_test - target_k)
+    best_louv_k7 <- test_louv
+  }
+}
+
+louv_k7_membership <- membership(best_louv_k7)
+louv_k7_modularity <- modularity(best_louv_k7)
+louv_k7_sizes <- table(louv_k7_membership)
+
+granularity_results <- rbind(granularity_results, data.frame(
+  K = length(best_louv_k7),
+  Source = "Louvain (k≈7 forzato)",
+  Modularity = round(louv_k7_modularity, 4),
+  Avg_size = round(mean(louv_k7_sizes), 1),
+  Min_size = min(louv_k7_sizes),
+  Max_size = max(louv_k7_sizes)
+))
+
+cat("\nCONFRONTO GRANULARITÀ:\n\n")
+print(granularity_results, row.names = FALSE)
+cat("\n")
+
+# Interpretazione
+cat("INTERPRETAZIONE:\n\n")
+
+mod_categories <- granularity_results$Modularity[1]
+mod_louvain <- granularity_results$Modularity[2]
+mod_louvain_k7 <- granularity_results$Modularity[3]
+
+if (mod_louvain > mod_categories + 0.05) {
+  cat("→ Le 7 categorie sono TROPPO GROSSOLANE.\n")
+  cat("  Louvain (k=", granularity_results$K[2], ") trova una struttura più fine e modulare.\n")
+  cat("  Modularity migliorata del", round((mod_louvain - mod_categories) / mod_categories * 100, 1), "%\n")
+  cat("  Conclusione: I", granularity_results$K[2], "cluster catturano meglio le sub-communities.\n\n")
+} else if (mod_categories > mod_louvain) {
+  cat("→ Le 7 categorie sono LA GRANULARITÀ GIUSTA.\n")
+  cat("  I", granularity_results$K[2], "cluster sono una sovra-segmentazione.\n\n")
+} else {
+  cat("→ Entrambe le granularità sono valide.\n")
+  cat("  7 = macro-struttura (topic generali)\n")
+  cat("  ", granularity_results$K[2], " = micro-struttura (sub-topic specializzati)\n\n")
+}
+
+cat("Louvain forzato a k≈7:\n")
+cat("  Ottiene k =", granularity_results$K[3], "con Q =", granularity_results$Modularity[3], "\n")
+if (mod_louvain_k7 > mod_categories) {
+  cat("  → Meglio delle categorie originali!\n")
+  cat("    La struttura di citazione suggerisce un raggruppamento diverso.\n\n")
+} else {
+  cat("  → Equivalente alle categorie originali.\n\n")
+}
+
+cat("========================================\n\n")
+
+# ============================================================================
+# Visualizzazione
+# ============================================================================
+
+library(ggplot2)
+
+# Plot comparativo
+p_granularity <- ggplot(granularity_results, aes(x = K, y = Modularity, color = Source)) +
+  geom_point(size = 5, alpha = 0.8) +
+  geom_line(aes(group = 1), linetype = "dashed", alpha = 0.5, color = "gray50") +
+  geom_text(aes(label = paste0("Q=", Modularity)), 
+            vjust = -1.2, size = 3.5, show.legend = FALSE) +
+  scale_color_brewer(palette = "Set1", name = NULL) +
+  labs(title = "Confronto Granularità: Categorie vs Communities",
+       subtitle = paste0(vcount(graph_filtered), " nodi"),
+       x = "Numero di cluster (k)", 
+       y = "Modularity Q") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+        plot.subtitle = element_text(size = 11, hjust = 0.5))
+
+print(p_granularity)
+
+cat("Visualizzazione completata.\n\n")
+
+```
+
+### Interpretazione
+
+I risultati rivelano un **disallineamento fondamentale** tra categorizzazione 
+scientifica e struttura della rete:
+
+1. **Ground-truth (k=7, Q=0.641)**: Le categorie scientifiche hanno modularity 
+   moderata, suggerendo che la classificazione "umana" non cattura perfettamente 
+   i pattern di citazione.
+
+2. **Louvain ottimale (k=34, Q=0.793)**: L'algoritmo trova una struttura più 
+   granulare con 34 communities, migliorando la modularity del 23.7%. Questo 
+   indica l'esistenza di **sub-communities tematiche** (es. CNN vs RNN all'interno 
+   di Neural Networks).
+
+3. **Louvain calibrato (k=25, Q=0.889)**: Il risultato più sorprendente. 
+   Cercando di forzare k≈7, l'algoritmo converge a k=25 con **modularity massima** 
+   (+38.8%). Questo suggerisce che:
+   
+   - La granularità ottimale della rete è **~25 sub-discipline**
+   - Le 7 categorie sono **macro-raggruppamenti** troppo grossolani
+   - La struttura di citazione riflette specializzazioni più fini
+
+**Conclusione**: Le categorie scientifiche servono per **organizzazione didattica**, 
+ma la **rete di citazioni** rivela una struttura comunitaria più complessa e 
+articolata (~25 clusters), riflettendo l'evoluzione naturale del campo verso 
+specializzazioni sempre più fini.
+
+
+
+
+
+
+
+## Domanda B
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# ============================================================================
+# Plot 1: Barplot doppio - MIGLIORATO con spiegazione entropia
+# ============================================================================
+
+frag_plot_data <- fragmentation_results
+frag_plot_data$Category_short <- gsub("_", "\n", frag_plot_data$Category)
+
+# Ordina per entropia
+frag_plot_data <- frag_plot_data[order(frag_plot_data$Entropy), ]
+frag_plot_data$Category_short <- factor(frag_plot_data$Category_short, 
+                                         levels = frag_plot_data$Category_short)
+
+p1 <- ggplot(frag_plot_data, aes(x = Category_short)) +
+  # Barre entropia
+  geom_col(aes(y = Entropy, fill = "Entropia\n(frammentazione)"), alpha = 0.7) +
+  # Linea numero communities (scala secondaria)
+  geom_line(aes(y = N_communities / 6, group = 1, color = "N Sub-Communities"), 
+            size = 1.5) +
+  geom_point(aes(y = N_communities / 6, color = "N Sub-Communities"), 
+             size = 4) +
+  # Annotazioni
+  annotate("text", x = 1.5, y = 3.5, 
+           label = "Entropia alta = Categoria frammentata\n(divisa in molte sub-communities)",
+           size = 3.5, color = "coral", fontface = "italic") +
+  annotate("text", x = 1.5, y = 0.5, 
+           label = "Entropia bassa = Categoria coesa\n(concentrata in poche communities)",
+           size = 3.5, color = "darkgreen", fontface = "italic") +
+  # Scale
+  scale_y_continuous(
+    name = "Entropia (misura frammentazione, 0-4 bits)",
+    sec.axis = sec_axis(~.*6, name = "Numero Sub-Communities")
+  ) +
+  scale_fill_manual(values = c("Entropia\n(frammentazione)" = "coral"), name = NULL) +
+  scale_color_manual(values = c("N Sub-Communities" = "steelblue"), name = NULL) +
+  labs(title = "Frammentazione delle Categorie",
+       subtitle = "Entropia di Shannon (barre) + Numero di sub-communities (linea)",
+       x = NULL) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 15),
+        plot.subtitle = element_text(hjust = 0.5, size = 11),
+        axis.text.x = element_text(size = 10),
+        legend.position = "bottom",
+        legend.text = element_text(size = 11))
+
+print(p1)
+cat("\n")
+
+# ============================================================================
+# Plot 2: Lollipop chart - Purezza per categoria
+# ============================================================================
+
+frag_plot_data <- frag_plot_data[order(-frag_plot_data$Largest_pct), ]
+frag_plot_data$Category_short <- factor(frag_plot_data$Category_short, 
+                                         levels = frag_plot_data$Category_short)
+
+# Aggiungi colore per soglie
+frag_plot_data$Purezza_level <- cut(frag_plot_data$Largest_pct,
+                                     breaks = c(0, 50, 70, 100),
+                                     labels = c("Bassa (<50%)", 
+                                                "Media (50-70%)", 
+                                                "Alta (>70%)"))
+
+p2 <- ggplot(frag_plot_data, aes(x = Category_short, y = Largest_pct, 
+                                  color = Purezza_level)) +
+  geom_segment(aes(xend = Category_short, y = 0, yend = Largest_pct), 
+               size = 1.5) +
+  geom_point(size = 6) +
+  geom_text(aes(label = paste0(Largest_pct, "%")), 
+            vjust = -1, size = 4, color = "black", fontface = "bold") +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "red", size = 0.8) +
+  annotate("text", x = 0.7, y = 53, label = "Soglia 50%", 
+           color = "red", size = 3.5) +
+  scale_color_manual(values = c("Bassa (<50%)" = "#d62728", 
+                                 "Media (50-70%)" = "#ff7f0e",
+                                 "Alta (>70%)" = "#2ca02c"),
+                     name = "Livello Purezza") +
+  coord_flip() +
+  labs(title = "Purezza delle Categorie",
+       subtitle = "% nodi nella community dominante",
+       x = NULL, y = "Purezza (%)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 15),
+        plot.subtitle = element_text(hjust = 0.5, size = 11),
+        legend.position = "bottom",
+        axis.text = element_text(size = 10))
+
+print(p2)
+cat("\n")
+
 
 ```
 
 
+Entropia BASSA (es. 1.065) → Categoria coesa
+
+La maggior parte dei nodi è in 1-2 communities
+
+Esempio: Reinforcement Learning (81.8% in una community)
+
+
+
+Entropia ALTA (es. 3.384) → Categoria frammentata
+
+I nodi sono sparsi in molte communities diverse
+
+Esempio: Neural Networks (divisa in 19 communities!)
+
+Campo multi-specializzato
+
+
+Tutte le categorie sono frammentate.
+
+
+Neural Networks (PIÙ frammentata):
+
+  - Divisa in 19 sub-communities diverse
+
+  - Solo 25.7% dei nodi nella community principale
+
+  - Entropia 3.384 (altissima)
+
+Non esiste un unico argomento "Neural Networks" unificato, ma si divide in CNN, RNN, GAN, Transformers, etc.
+
+
+Reinforcement Learning (MENO frammentata):
+
+  - 81.8% dei nodi in una sola community (C7)
+
+  - Ma comunque divisa in 8 communities → ancora frammentata
+
+
+
+La struttura reale ha ~25 sub-communities specializzate invece delle 7 categorie di partenza.
 
