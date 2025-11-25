@@ -112,8 +112,18 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
                 Tabella : Distribuzione per livello di interdisciplinarità
 
 
-  4 : Confronto tra Similarità e Centralità. Domande di ricerca :
-
+  4 : Analisi a livello di categoria
+  
+      4.1 Quali sono le discipline più autocitanti ? 
+      
+      4.2 Grafico : heatmap della matrice X-test tra categorie 
+      
+      4.3 Tabella : le top 5 categorie per interdisciplinarietà (Rao)
+       
+  
+  5 : Confronto tra Similarità e Centralità
+  
+    Domande di ricerca :
 
       A. I paper con alta centralità (es. PageRank, betweenness) tendono ad essere interdisciplinari ?
 
@@ -161,6 +171,7 @@ library(ggraph)
 library(dplyr)
 library(ggplot2)
 library(knitr)
+library(reshape2)
 ```
 
 Carico i dati ottenuti dall'esecuzione 02_Centrality_Analysis.
@@ -341,8 +352,13 @@ Dunque ho tagliato via
 
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
 
+# Step 0: Definisco nodes dal grafo di partenza
+nodes <- data.frame(
+  name = V(graph)$name,
+  category = V(graph)$category
+)
 
-# Step 1: Estrai top 500 coppie per cosine similarity (solo 0 < sim < 1)
+# Step 1: top 500 coppie per cosine similarity (solo 0 < sim < 1)
 similarity_df <- as.data.frame(as.table(S_cosine_in)) %>%
   rename(node_i = Var1, node_j = Var2, similarity = Freq) %>%
   filter(as.character(node_i) < as.character(node_j)) %>%
@@ -351,10 +367,11 @@ similarity_df <- as.data.frame(as.table(S_cosine_in)) %>%
   arrange(desc(similarity)) %>% 
   slice_head(n = 500)
 
-# Step 2: Crea il grafo pesato
+# Step 2: Creo il grafo pesato
 sim_graph <- graph_from_data_frame(similarity_df, directed = FALSE)
 
-# (facoltativo) Porta gli attributi categoria dal grafo originale, se presenti
+
+# Porto gli attributi categoria dal grafo originale, se presenti
 if ("category" %in% colnames(nodes)) {
   V(sim_graph)$category <- nodes$category[match(V(sim_graph)$name, nodes$name)]
 }
@@ -394,18 +411,15 @@ La correlazione di Pearson tra due nodi i e j misura quanto i loro pattern di co
 # Matrice di adiacenza
 A <- as_adjacency_matrix(graph, sparse = FALSE)
 
-# ============================================================================
 # 1. PEARSON SIMILARITY - Successori comuni (paper citati in comune)
-# ============================================================================
 
 S_pearson_out <- cor(t(A))
 diag(S_pearson_out) <- 0
 rownames(S_pearson_out) <- V(graph)$name
 colnames(S_pearson_out) <- V(graph)$name
 
-# ============================================================================
+
 # 2. PEARSON SIMILARITY - Predecessori comuni (paper citanti in comune)
-# ============================================================================
 
 S_pearson_in <- cor(A)
 diag(S_pearson_in) <- 0
@@ -418,7 +432,6 @@ colnames(S_pearson_in) <- V(graph)$name
 Distribuzione della Pearson similarity
 
 ```{r}
-
 
 # Successori comuni
 
@@ -481,12 +494,11 @@ Non ci sono "competizioni" tra paper nella citazione: citare un paper non esclud
 pearson_values <- S_pearson_in[upper.tri(S_pearson_in)]
 pearson_values <- pearson_values[!is.na(pearson_values)]
 
+
 cat("Coppie con ρ < -0.1:", sum(pearson_values < -0.1), "\n")
 cat("Coppie con ρ > 0.1:", sum(pearson_values > 0.1), "\n")
 cat("Percentuale negativi significativi:", 
     round(100 * mean(pearson_values < -0.1), 4), "%\n")
-
-
 ```
 
 
@@ -954,7 +966,7 @@ dove
 Esempio: Una disciplina è molto eterogenea (interdisciplinare) se cita molte discipline diverse in proporzioni simili E quelle discipline sono dissimili tra loro.
 
 
-Per un grafo diretto, hai due opzioni per definire i vicini di un nodo:
+Per un grafo diretto, ho 2 opzioni per definire i vicini di un nodo:
 
   - Out-neighbors (nodi citati): analizza l'eterogeneità delle categorie che il nodo i cita
 
@@ -973,13 +985,9 @@ categories <- sort(unique(node_categories))
 k <- length(categories)
 n <- vcount(graph)
 
-cat("============================================================================\n")
-cat("RAO QUADRATIC ENTROPY - Setup\n")
-cat("============================================================================\n")
 cat("  Numero paper (nodi):", n, "\n")
 cat("  Numero categorie:", k, "\n")
 cat("  Categorie:", paste(categories, collapse = ", "), "\n\n")
-
 ```
 
 ### STEP 1 : Creare una matrice di flusso F 
@@ -1146,7 +1154,6 @@ Ho che :
 La funzione diag(p) crea una matrice diagonale k × k con i valori di p sulla diagonale.
 
 
-
 ```{r}
 
 # Funzione Rao 
@@ -1205,11 +1212,8 @@ cat("   Paper totali:", totale, "\n")
 cat("   Somma classificazioni:", check_sum, "\n")
 cat("   Verifica (devono coincidere):", ifelse(totale == check_sum, "✓ OK", "✗ ERRORE"), "\n\n")
 
-# Statistiche aggiuntive
-cat("============================================================================\n")
-cat("STATISTICHE AGGIUNTIVE\n")
-cat("============================================================================\n\n")
 
+# Statistiche aggiuntive
 cat("Paper con citazioni out (specializzati + interdisciplinari):\n")
 cat("   Numero:", specializzati + interdisciplinari, "\n")
 cat("   Percentuale:", round((specializzati + interdisciplinari) / totale * 100, 2), "%\n\n")
@@ -1228,9 +1232,6 @@ cat("   Deviazione standard:", round(sd(rao_interdisciplinari), 4), "\n\n")
 cat("Out-degree medio per tipo:\n")
 cat("   Paper specializzati:", round(mean(out_degrees[out_degrees > 0 & rao_values == 0]), 2), "\n")
 cat("   Paper interdisciplinari:", round(mean(out_degrees[rao_values > 0]), 2), "\n\n")
-
-cat("============================================================================\n")
-
 
 ```
 Dunque sia i 1143 paper che non citano nessuno ed i 1265 paper che citano solo la propria categoria
@@ -1369,10 +1370,249 @@ print(kable(interdisciplinarity_levels,
             col.names = c("Livello di Interdisciplinarità", "Numero Paper", "Percentuale (%)")))
 ```
 
-    
+## 4 : Analisi a livello Categoria
+
+### 4.1 Discipline più e meno autocitanti 
+
+Voglio cercare di capir quali sono le discipline che si autocitano di più e quali invece lo fanno meno
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+edges <- readRDS("../data/processed/edges.rds")
+
+edges_cat_df <- edges %>%
+  mutate(
+    category_from = V(graph)$category[match(from, V(graph)$name)],
+    category_to   = V(graph)$category[match(to, V(graph)$name)]
+  )
+
+# edges_cat_df è già la tabella archi con categoria sorgente/destinazione
+
+# 1. Conta i flussi tra categorie
+flows_cat <- edges_cat_df %>%
+  count(category_from, category_to, name = "n_citations")
+
+# 2. Calcola la size (numero di paper) per ciascuna categoria
+size_cat <- as.data.frame(table(V(graph)$category))
+colnames(size_cat) <- c("category", "size")
+
+# 3. Calcola autocitazione, citazioni ricevute, citazioni inviate
+flows_summary <- size_cat %>%
+  left_join(
+    flows_cat %>% 
+      filter(category_from == category_to) %>% 
+      group_by(category_from) %>% 
+      summarise(self_citation = sum(n_citations)), 
+    by = c("category" = "category_from")
+  ) %>%
+  left_join(
+    flows_cat %>% 
+      filter(category_from != category_to) %>%
+      group_by(category_to) %>% 
+      summarise(in_citation = sum(n_citations)), 
+    by = c("category" = "category_to")
+  ) %>%
+  left_join(
+    flows_cat %>% 
+      filter(category_from != category_to) %>%
+      group_by(category_from) %>% 
+      summarise(out_citation = sum(n_citations)), 
+    by = c("category" = "category_from")
+  )
+
+# 4. Calcola le metriche normalizzate 
+flows_summary <- flows_summary %>%
+  mutate(self_per_paper = self_citation / size,
+         in_per_paper   = in_citation / size,
+         out_per_paper  = out_citation / size)
+
+# 5. Ordina e mostra le discipline più autocitanti e più citate
+flows_summary %>% arrange(desc(self_per_paper))
+flows_summary %>% arrange(desc(in_per_paper))
 
 
-##  4 : Confronto tra Similarità e Centralità
+```
+
+Avevamo già calcolato in precedenza la matrice di flusso F.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+# normalize by expected flows 
+r = rowSums(F)
+c = colSums(F)
+n = sum(r)
+# expected flow
+E = outer(r, c, "*") / n
+
+# normalized flows (X-test)
+X_test = (F - E) / sqrt(E) 
+# normalized flows (G-test)
+G_test = F * log(F / E)
+
+```
+
+
+### 4.2 Creo la heatmap della matrice X-test tra categorie
+
+rappresenta quanto il flusso di citazioni da una categoria (sull’asse Y, “sorgente”) verso un’altra categoria (sull’asse X, “destinazione”) è superiore o inferiore a quanto atteso da un modello casuale che tiene conto solo dell’attività di citazione e di essere citati di ciascuna categoria.
+
+
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Supponi di avere già la matrice X_test 7x7 e il vettore categories
+# Assicurati che X_test abbia i nomi riga/colonna giusti!
+rownames(X_test) <- categories
+colnames(X_test) <- categories
+
+# Rimuovi le autocitazioni (diagonale)
+diag(X_test) <- 0
+
+# Porta la matrice in formato 'long' per ggplot
+df <- melt(X_test)
+colnames(df) <- c("i", "j", "value")
+
+# Calcola il massimo assoluto per scalare la palette colore
+m <- max(abs(df$value), na.rm = TRUE)
+
+# Crea la heatmap
+ggplot(df, aes(j, i, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    limits = c(-m, m)
+  ) +
+  coord_fixed() +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "X-test fra categorie\nFlusso osservato vs atteso",
+    x = "Categoria j (Destinazione)",
+    y = "Categoria i (Sorgente)",
+    fill = "X-test"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 40, hjust = 1),
+    axis.ticks = element_blank(),
+    axis.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+
+```
+
+Le celle in blu indicano che ci sono meno citazioni del previsto, cioè flusso o scarso collegamento rispetto a quanto ci si aspetterebbe casualmente.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+
+# Se X_undir, g, categories sono già definiti...
+# Plot 1: Tutti i pesi
+ggraph(g, layout = "circle") +
+  geom_edge_link(
+    aes(width = abs(weight), color = weight),
+    show.legend = TRUE
+  ) +
+  scale_edge_color_gradient2(
+    low = "blue", mid = "white", high = "red", midpoint = 0,
+    name = "X-test"
+  ) +
+  scale_edge_width(range = c(0.5, 4), guide = "none") +
+  geom_node_point(size = 9, color = "dodgerblue3") +
+  geom_node_text(aes(label = name), size = 5, vjust = 2.5) +
+  coord_fixed() +
+  theme_graph() +
+  labs(
+    title = "Flusso anomalo osservato vs atteso tra categorie",
+    subtitle = "Spessore e colore indicano l'entità dell'anomalia (X-test)"
+  )
+
+```
+
+### 4.3 Troviamo le top 5 categorie per interdisciplinarietà
+
+Prima definiamo le funzioni che servono nel calcolo
+
+```{r}
+# --- Funzioni ----
+similarity <- function(g, type = "cosine", mode = "col" ) {
+  A <- as_adjacency_matrix(g, attr = "weight", sparse = FALSE)
+  if (mode == "row") {A <- t(A)}
+  if (type == "cosine") {
+    euclidean <- function(x) {sqrt(x %*% x)}
+    d <- apply(A, 2, euclidean)
+    D <- diag(1/d)
+    S <- D %*% t(A) %*% A %*% D
+  }
+  if (type == "pearson") {
+    S <- cor(A)
+  }
+  return(S)
+}
+
+shannon <- function(p) {
+  x <- p * log2(p)
+  x[is.nan(x)] <- 0
+  return(-sum(x))
+}
+
+simpson <- function(p) {
+  x <- 1 - sum(p * p)
+  return(x)
+}
+
+rao <- function(p, D) {
+  x <- diag(p) %*% D %*% diag(p)
+  return(sum(c(x)))
+}
+
+heterogeneity <- function(g, D, mode = "col") {
+  A <- as_adjacency_matrix(g, attr = "weight", sparse = FALSE)
+  if (mode == "col") {
+    A <- A %*% diag(1/colSums(A))
+    dim <- 2 
+  } else {
+    A <- diag(1/rowSums(A)) %*% A
+    dim <- 1 
+  }
+  return(list(
+    shannon = apply(A, dim, shannon), 
+    simpson = apply(A, dim, simpson), 
+    rao = apply(A, dim, rao, D)
+  ))
+}
+
+# Flusso tra categorie
+
+# 1. Grafo di flusso
+f <- graph_from_adjacency_matrix(F, mode = "directed", weighted = TRUE)
+V(f)$name <- categories
+
+# 2. Similarità e matrice distanza
+S <- similarity(f)         # Similarità tipo cosine (default)
+D <- 1 - S                 # Distanza per Rao
+
+# 3. Eterogeneità (Rao)
+het <- heterogeneity(f, D)
+rao_scores <- het$rao
+
+# Dataframe categorie e Rao 
+flows_summary$rao_entropy <- rao_scores 
+
+# Top 5 categorie più interdisciplinari
+flows_summary %>%
+  select(category, rao_entropy) %>%
+  arrange(desc(rao_entropy)) %>%
+  head(5)
+
+```
+
+```{r}
+
+```
+
+
+##  5 : Confronto tra Similarità e Centralità
 
 ----------------------------------------------------------------------------------------------------------------------------
 
@@ -1996,9 +2236,7 @@ cat("  4. Flussi cross-disciplinari rivelano gerarchie epistemiche\n\n")
 cat("============================================================================\n\n")
 
 
-# ============================================================================
-# ESPORTAZIONE RISULTATI
-# ============================================================================
+
 
 cat("============================================================================\n")
 cat("SALVATAGGIO DATI PER ANALISI FUTURE\n")

@@ -13,21 +13,31 @@ Carchiamo qui dei pattern ricorrenti nelle strutture dele networks.
 
 Essi hanno un effetto determinante su come il networked system lavora :
 
-  - Connected components and Strongly Connected components 
+  1 : Connected components and Strongly Connected components 
 
-  - Path lengths and the Small-world effect
+  2 : Path lengths and the Small-world effect
 
   - Motifs
 
   - Assortative Mixing
 
-## Connected Component
+```{r}
+library(igraph)
+library(ggplot2)
+library(ggraph)
+library(dplyr)
+library(tidygraph)
+library(knitr)
+```
+
+
+## 1 : Connected Component
 
 La componente connessa di un grafo non dirtto è il set massimo di nodi tale che ogni coppia di nodi è connessa da un path.
 
 Il Giant Component riempie la maggior parte della rete.
 
-## Strongly Connected Components
+### Strongly Connected Components
 
 2 nodi sono nello stesso Strongly Connected Components se sono a vicendnda raggiungibili mediante un directed path.
 
@@ -38,3 +48,7 @@ Formano una partizione del set dei vertici e definiscono una relazione di equiva
 In questo caso stiamo lavorando con una citation network, la quale è una rete aciclica.
 
 Le reti aciclinche non hanno strongly connected components di dimensione maggiore di 1.
+
+## 2 : Path lengths and the Small-world effect
+
+
