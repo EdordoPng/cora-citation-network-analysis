@@ -149,7 +149,7 @@ Abbiamo dunque filtratoi il grafo, il quale è ancora un grafo diretto non pesat
 
 Serve ora far collassare gli archi bidirezionali, ossia convertiamo il grafo.
 
-PAssiamo da uno diretto a non diretto.
+Passiamo da uno diretto a non diretto.
 
 ```{r}
 
