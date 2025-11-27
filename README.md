@@ -11,8 +11,8 @@ Il progetto è organizzato in script “backend” in R e in notebook R Markdown
 - `data/raw/` – contiene i file originali del dataset Cora (`cora.content`, `cora.cites`).​
 - `data/processed/` – contiene oggetti `.rds` e altri file derivati usati nei notebook successivi.​  
 - `scripts/` – contiene gli script R “automatici”:  
-  - `01_download_data.R` – scarica e prepara il dataset Cora nella cartella `data/raw`.  
-  - `create_project_structure.R` – crea tutta la struttura di cartelle e i file `.gitkeep`.​  
+  - `01_download_data.R` – scarica e prepara il dataset Cora nella cartella `data/raw` (chiamato in 01_Network_Construction)
+- `create_project_structure.R` – crea tutta la struttura di cartelle e i file `.gitkeep`.​  
 - `notebooks/` – contiene i notebook R Markdown numerati (01_… 05_…) con tutte le analisi.​  
 
 ### Cartelle disponibili per analisi future
