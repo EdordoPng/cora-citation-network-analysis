@@ -57,14 +57,13 @@ Ripeti questi passi per tutti e 5 i notbooks, dei quali qui sotto riporto gli in
 3. Oggetto igraph  
 4. Matrice di Adiacenza e statistiche  
 5. Visualizzazione Cora Citation Network  
-
 Bonus : Panoramica della rete in base alla Degree Centrality  
-6. Studio in-degree per ogni paper  
-7. Studio out-degree per ogni paper  
-8. Tabella numero di paper totale per ogni categoria  
-9. Tabella di quanti paper citano tot paper  
-10. Tabella citazioni totali intra-disciplinari per categoria  
-11. Salvataggio oggetti per analisi successive
+  6. Studio in-degree per ogni paper  
+  7. Studio out-degree per ogni paper  
+  8. Tabella numero di paper totale per ogni categoria  
+  9. Tabella di quanti paper citano tot paper  
+  10. Tabella citazioni totali intra-disciplinari per categoria  
+  11. Salvataggio oggetti per analisi successive
 
 ---
 
