@@ -166,3 +166,21 @@ Bonus : Panoramica della rete in base alla Degree Centrality
    - Domanda A : identifica se l’elite delle pubblicazioni crea un “club” chiuso  
 5. Transitivity e Transitivity coefficient  
 6. Reciprocity
+
+---
+
+## Domande di ricerca : 
+
+### Local Analysis 
+A. I paper con alta centralità (es. PageRank, betweenness) tendono ad essere interdisciplinari?
+B. I paper interdisciplinari sono più influenti nella rete?
+C. Quali categorie producono i paper più interdisciplinari? Quali beneficiano di più dai ponti interdisciplinari?
+
+### Group Analysis
+A. Le communities trovate coincidono con le categorie scientifiche?  
+B. Quali categorie sono più pure? (una sola community o meno possibili)  
+
+### Global Analysis
+A. Capisci se l’elite delle pubblicazioni crea un “club” chiuso  
+
+
