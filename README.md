@@ -45,8 +45,8 @@ Il progetto è organizzato in script “backend” in R e in notebook R Markdown
 Apri `notebooks/01_Network_Construction.Rmd` in RStudio.​  
 Poi esegui il codice dei vari chunk presenti in tale file R Markdown in RStudio.
 
-Alternativamente, fai knit ed esegui così tutto il codice, ottenengo un html.  
-Rpeti questi passi per tutti e 5 i notbooks, dei quali qui sotto riporto gli indici.
+Alternativamente, fai knit ed esegui così tutto il codice, ottenendo un html.  
+Ripeti questi passi per tutti e 5 i notbooks, dei quali qui sotto riporto gli indici.
 
 ---
 
