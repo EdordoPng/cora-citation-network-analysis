@@ -24,7 +24,7 @@ knitr::opts_chunk$set(echo = TRUE)
       * 2.6 : HITS
       * 2.7 : Katz Centrality
       
-   3 : Compare Centralities
+   3 : Paragoni tra le centralità
    4 : Power 
    5 : Compare Power and Katz Centrality
    6 : Uso delle 2 matrici proiezioni A %*% t(A) e t(A) %*% A (prodotto matriciale)
@@ -537,7 +537,7 @@ La centralità guadagnata in virtù del ricevere un link da un nodo importante d
 
 Il PageRank risolve questo problema. 
 
-## 3 : Compare Centralities
+## 3 : Paragoni tra le centralità
 
 ```{r}
 
@@ -702,7 +702,7 @@ graph
 ```
 
 
-## 5 : Compare Power and Katz Centrality
+## 5 : Paragone tra Power and Katz Centrality
 
 Alta Katz = Paper molto citato da altri paper autorevoli (è un "riferimento" nella comunità)
 
