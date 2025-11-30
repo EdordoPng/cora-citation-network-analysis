@@ -6,15 +6,10 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE, message = FALSE, warning = FALSE, error = FALSE)
 ```
 
-Dopo aver creato le cartelle, prosegui a scaricare il file del progetto
-Se non va, prova ad eseguirlo direttamente da terminale.
 
-```{r}
-source("../scripts/01_download_data.R")
-```
 
 # Indice : 01_Network_Construction.Rmd: 
 
@@ -35,13 +30,21 @@ source("../scripts/01_download_data.R")
 
 ##  1 : Caricare le librerie
 
-```{r setup, include=FALSE}
-
+```{r}
 library(dplyr)
 library(tidygraph)
 library(igraph)
 library(ggraph)
 library(ggplot2)
+```
+
+Esegui questo per scaricare i file necessari al progetto.
+
+Eventualmente è meglio chiamarlo da terminale.
+
+```{r}
+
+# source("../scripts/01_download_data.R")
 
 ```
 
@@ -226,7 +229,7 @@ out_deg <- degree(graph_igraph, mode = "out")
 # Paper con più citazioni fatte
 top_citers <- data.frame( paper_id = names(out_deg), outdegree = as.numeric(out_deg)) %>% 
   arrange(desc(outdegree)) %>% 
-  head(310)
+  head(10)
 
 print(top_citers)
 

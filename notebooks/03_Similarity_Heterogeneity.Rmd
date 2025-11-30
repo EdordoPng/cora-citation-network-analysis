@@ -1505,8 +1505,21 @@ Le celle in blu indicano che ci sono meno citazioni del previsto, cioè flusso o
 
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
 
+# Porta X_test in formato long
+df_edges <- reshape2::melt(X_test)
+colnames(df_edges) <- c("from", "to", "weight")
 
-# Se X_undir, g, categories sono già definiti...
+# (Opzionale) rimuovi diagonale e tieni solo archi con peso abbastanza grande
+threshold <- 1  # scegli tu la soglia
+df_edges <- df_edges %>%
+  filter(from != to, !is.na(weight), abs(weight) > threshold)
+
+g <- igraph::graph_from_data_frame(
+  d = df_edges,
+  vertices = data.frame(name = categories),
+  directed = TRUE
+)
+
 # Plot 1: Tutti i pesi
 ggraph(g, layout = "circle") +
   geom_edge_link(
@@ -1790,6 +1803,27 @@ Vediamo ora questi grafici per rispondere alla domanda :
 
 
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Assumo che df_active esista già e contenga:
+# rao_entropy, betweenness, pagerank, category
+
+# Definisco il tipo in base a Rao
+df_active$tipo <- ifelse(df_active$rao_entropy > 0, "Interdisciplinare", "Specializzato")
+df_active$tipo <- factor(df_active$tipo, levels = c("Specializzato", "Interdisciplinare"))
+
+# Calcolo le medie di betweenness per i due gruppi
+inter_betweenness <- df_active %>%
+  filter(rao_entropy > 0, !is.na(betweenness)) %>%
+  summarise(m = mean(betweenness)) %>%
+  pull(m)
+
+spec_betweenness <- df_active %>%
+  filter(rao_entropy == 0, !is.na(betweenness)) %>%
+  summarise(m = mean(betweenness)) %>%
+  pull(m)
+
+
+
 
 # Grafico 1 : Betweeness
 
