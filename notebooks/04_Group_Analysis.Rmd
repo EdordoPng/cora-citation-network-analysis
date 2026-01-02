@@ -145,7 +145,7 @@ Cercano di massimizzare la modularità in modi intelligenti.
 
 ## 5 : Community Detection Algorithms sulla rete che ottimizzano la Modularità
 
-Abbiamo dunque filtratoi il grafo, il quale è ancora un grafo diretto non pesato.
+Abbiamo dunque filtrato il grafo, il quale è ancora un grafo diretto non pesato.
 
 Serve ora far collassare gli archi bidirezionali, ossia convertiamo il grafo.
 

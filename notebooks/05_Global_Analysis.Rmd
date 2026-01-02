@@ -97,8 +97,8 @@ Lavoro qui con il grafo indiretto.
 cc <- components(graph_undirected)
 
 cat("Numero componenti connesse:", cc$no, "\n")
-cat("Taglia maxima (Giant Component):", max(cc$csize), "nodi\n")
-cat("Percentuale della Giant Component:", round(100 * max(cc$csize) / vcount(graph_undirected), 1), "%\n")
+cat("Dimensione del Giant Component):", max(cc$csize), "nodi\n")
+cat("Percentuale Giant Component:", round(100 * max(cc$csize) / vcount(graph_undirected), 1), "%\n")
 
 # Nodi che sono nella componente gigante
 gc_nodes <- which(cc$membership == which.max(cc$csize))
@@ -164,11 +164,11 @@ Nel caso di un grafo diretto, abbiamo questa nozione.
 Formano una partizione del set dei vertici e definiscono una relazione di equivalenza tra nodi.
 
 
-In questo caso stiamo lavorando con una citation network, la quale è una rete aciclica.
+In questo caso stiamo lavorando con una citation network, la quale è una quasi aciclica.
 
-Questo è dovuto al fatto che quando un paper ne cita un altro, questo citato sarà stato per forza scritto in passato.
+Questo è dovuto al fatto che quando un paper ne cita un altro, questo citato sarà stato per forza scritto in passato (e dunque non può ricambiare la connssione)
 
-La citation network è aciclica, quindi non ci aspettiamo SCC di grandi dimensioni.
+Dunque poichè la Cora citation network è quasi aciclica, mi aspetto di non trovare SCC di grandi dimensioni.
 
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
 

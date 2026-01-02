@@ -733,7 +733,7 @@ ggplot(comparison_df, aes(x = katz_manual, y = sum_sim)) +
 Un nodo è eterogeneo se è dissimile dai vicini.
 
 L'eterogeneità può essere integrata nella centralità.
-Infatti i nodi che ricevono archi da altri nodi che sono eterogenei, sono considerati più importanti rispetto a quelli che ricevono un arco da nodi molto simili tra loro.
+Infatti i nodi che ricevono archi da nodi tra loro eterogenei, sono considerati più importanti rispetto a quelli che ricevono archi da nodi molto simili tra loro.
 
 Entrambe le misure che vedremo (Shannon e Simpson) sono massimizzate quando la probabilità è equamente distribuita tra gli elementi (pi = 1/n)
 
@@ -831,6 +831,12 @@ cat("Min:", round(min(nodes_data$shannon, na.rm = TRUE), 4), "\n")
 cat("Max:", round(max(nodes_data$shannon, na.rm = TRUE), 4), "\n\n")
 
 ```
+La Media : 0.2029 ,indica che in media appunto i paper ricevono citazioni da un insieme abbastanza omogeneo di categorie
+
+
+Entropia alta → nodo connesso a vicini di molte categorie diverse (eterogeneo)
+
+Entropia bassa → nodo connesso a vicini della stessa categoria (omogeneo)
 
 La tabella mostra i 10 paper con la più alta Shannon Entropy, cioè quelli citati dal mix più diversificato di categorie.
 
@@ -845,12 +851,6 @@ kable(top_heterogeneous, digits = 4,
       col.names = c("Paper", "Categoria", "Shannon Entropy"))
 
 ```
-La Media: 0.2029 indica che in medi appunto i paper ricevono citazioni da un insieme abbastanza omogeneo di categorie
-
-
-Entropia alta → nodo connesso a vicini di molte categorie diverse (eterogeneo)
-
-Entropia bassa → nodo connesso a vicini della stessa categoria (omogeneo)
 
 
 
@@ -963,16 +963,16 @@ dove
 
   - d(c1,c2) è la distanza/dissimilarità tra le categorie c1 e c2. 
 
-Esempio: Una disciplina è molto eterogenea (interdisciplinare) se cita molte discipline diverse in proporzioni simili E quelle discipline sono dissimili tra loro.
+Esempio: Una disciplina è molto eterogenea (interdisciplinare) se cita molte discipline diverse tra loro in proporzioni simili.
 
 
-Per un grafo diretto, ho 2 opzioni per definire i vicini di un nodo:
+Per un grafo diretto (come quello che abbiamo qui), ho 2 opzioni per definire i vicini di un nodo:
 
   - Out-neighbors (nodi citati): analizza l'eterogeneità delle categorie che il nodo i cita
 
   - In-neighbors (nodi citanti): analizza l'eterogeneità delle categorie che citano il nodo i
 
-Nel contesto di un citation network, l'opzione più sensata è analizzare gli out-neighbors, perché misura quanto è interdisciplinare il pattern di citazioni in uscita.
+Nel contesto di un citation network, l'opzione che io reputo più sensata è analizzare gli out-neighbors, misurando quanto è interdisciplinare il pattern di citazioni in uscita.
 
 Rao dunque misura quanto sono diverse tra loro le categorie che il paper i cita.
 
@@ -1008,11 +1008,11 @@ Essa è una matrice n × k (paper × categorie) dove ogni elemento vale:
 
 Ottengo la matrice di Flusso F in questo modo : 
 
-  * A × C : Prodotto tra matrice di adiacenza (n×n) e matrice indicatrice (n×k) → risultato (n×k)
+  * A × C : Prodotto tra matrice di adiacenza (n × n) e matrice indicatrice (n × k) → risultato (n × k)
 
     Per ogni paper i, conta quanti paper cita in ciascuna categoria
 
-  * t(C) × (A × C) : Prodotto tra C trasposta (k×n) e il risultato precedente (n×k) → risultato (k×k)
+  * t(C) × (A × C) : Prodotto tra C trasposta (k × n) e il risultato precedente (n × k) → risultato (k × k)
 
     Aggrega per categoria di partenza
 
@@ -1020,6 +1020,7 @@ Ottengo la matrice di Flusso F in questo modo :
 
 
 ```{r}
+
 # Matrice Indicatrice C
 C <- matrix(0, nrow = n, ncol = k)
 colnames(C) <- categories
@@ -1034,10 +1035,10 @@ F <- t(C) %*% A %*% C
 rownames(F) <- categories
 colnames(F) <- categories
 
-cat("  Matrice F calcolata:", nrow(F), "×", ncol(F), "\n")
 cat("  Totale citazioni inter-categoria:", sum(F), "\n\n")
 
 ```
+
 F rappresenta i "profili di citazione" delle categorie:
 
   - Ogni riga di F mostra quali categorie una determinata categoria tende a citare
@@ -1236,7 +1237,7 @@ cat("   Paper interdisciplinari:", round(mean(out_degrees[rao_values > 0]), 2), 
 ```
 Dunque sia i 1143 paper che non citano nessuno ed i 1265 paper che citano solo la propria categoria
 
-Dunque su 1565 paper che almeno 1 citazione ad un altro paper, solo 300 citano più (paper) di una categoria 
+Dunque su 1565 paper che almeno 1 citazione ad un altro paper, solo 300 citano paper di una categoria diversa dalla propria. 
 
 
 Interpretazione dei valori : 
@@ -1639,7 +1640,7 @@ Domande di ricerca :
   
 ----------------------------------------------------------------------------------------------------------------------------
   
-### Domanda A : I paper con alta centralità (es. PageRank, betweenness) tendono ad essere interdisciplinari?
+### Domanda A : I paper con alta centralità (es. PageRank, Betweenness) tendono ad essere interdisciplinari?
 
 Procedimento : 
 
@@ -1672,11 +1673,9 @@ cat("  Paper totali:", nrow(df_analysis), "\n")
 cat("  Paper con citazioni out:", nrow(df_active), "\n")
 cat("  (Solo questi possono avere Rao > 0)\n\n")
 
-cat("----------------------------------------------------------------------------\n")
-cat("1.1 - Identificazione paper ad ALTA CENTRALITÀ\n")
-cat("----------------------------------------------------------------------------\n\n")
+# Identificazione paper con alta Centralità
 
-# Definisci threshold per "alta centralità" (top 10%)
+# Definiamo una threshold per "alta centralità" (top 10%)
 threshold_pagerank <- quantile(df_active$pagerank, 0.90)
 threshold_betweenness <- quantile(df_active$betweenness, 0.90)
 
@@ -1723,6 +1722,7 @@ cat("  % con Rao > 0 (interdisciplinari):",
 
 
 ```
+
 Grafico : Alta centralità → Maggiore interdisciplinarità
 
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
@@ -1991,7 +1991,7 @@ I paper interdisciplinari (alto Rao da out-degree) sono più influenti (alto in-
   - Se intendiamo influenza come PageRank/In-degree allora no, infatti gli specializzati sono PIÙ citati (+28% PageRank).
 
   - Se intendiamo invece la Betweeness allora si, gli interdisciplinari hanno +1019% Betweenness.
-    Sono i PONTI che connettono discipline diverse, hanno un ruolo CRITICO per la circolazione delle idee.
+    Sono i PONTI che connettono discipline diverse, hanno un ruolo importante per la circolazione delle idee.
     
 
 

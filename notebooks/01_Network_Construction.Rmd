@@ -10,7 +10,6 @@ knitr::opts_chunk$set(cache = TRUE, message = FALSE, warning = FALSE, error = FA
 ```
 
 
-
 # Indice : 01_Network_Construction.Rmd: 
 
   1 : Caricare le librerie
@@ -18,15 +17,17 @@ knitr::opts_chunk$set(cache = TRUE, message = FALSE, warning = FALSE, error = FA
   3 : Oggetto igraph
   4 : Matrice di Adiacenza
   5 : Visualizzazione Cora Citation Network
-  
-  Bonus : Panoramica della rete in base alla Degree Centrality
   6 : Studio in-degree per ogni paper
   7 : Studio out-degree per ogni paper
-  8 : Tabella numero di paper totale per ogni categoria
-  9 : Tabella di quanti paper citano tot paper
-  10 : Tabella citazioni totali intra-disciplinari per categoria
+  
+  Sezione Domande
 
-  11 : Salvataggio oggetti per analisi successive
+  A : Qual è il numero di paper in ogni categoria ?
+  B : Qual è la distribuzione del numero di citazioni fatte dai paper ?
+  C : Per ogni catgoria, quante sono le citazioni verso la stessa categoria ?
+
+  8 : Salvataggio oggetti per analisi successive
+
 
 ##  1 : Caricare le librerie
 
@@ -40,7 +41,7 @@ library(ggplot2)
 
 Esegui questo per scaricare i file necessari al progetto.
 
-Eventualmente è meglio chiamarlo da terminale.
+Se non va, prova a chiamare da terminale "../scripts/01_download_data.R" dopo aver aperto il progetto in RStudio.
 
 ```{r}
 
@@ -88,6 +89,7 @@ edges <- cites_df %>%
 cat("Letti archi citazioni:", nrow(cites_df), "\n\n")
 
 ```
+
 ## 3 : Oggetto igraph
 
 Ottengo il grafo igraph dal data frame.
@@ -236,7 +238,10 @@ print(top_citers)
 ```
 
 
-## 8 : Tabella numero di paper totale per ogni categoria
+# Sezione Domande
+
+
+## Domanda A : Qual è il numero di paper in ogni categoria ? 
 
 Vediamo ora il numero di paper totale per ciascuna categoria.
 
@@ -252,7 +257,7 @@ print(category_table)
 ```
 
 
-## 9 : Tabella di quanti paper citano tot paper
+## Domanda B : Qual è la distribuzione del numero di citazioni fatte dai paper ?
 
 Vediamo quanto i paper sono propensi a citare altri articoli. 
 
@@ -260,7 +265,6 @@ Mostiamo quindi quanti paper hanno un complessivo di 0 citazioni ad altri artico
 
 ```{r}
 
-# Tabella: quante paper fanno 0, 1, ... 5 citazioni (sono 6 possibili valori, da 0 a 5)
 outdeg_table <- as.data.frame(table(out_deg))
 colnames(outdeg_table) <- c("citazioni_fatte", "numero_paper")
 
@@ -268,11 +272,29 @@ print(outdeg_table)
 
 ```
 
-## 10 : Tabella citazioni totali intra-disciplinari per categoria
+## Domanda C : Per ogni catgoria, quante sono le citazioni verso la stessa categoria ? 
+
 
 Numero di volte che un paper, di una certa categoria, cita un paper che sta nella stessa categoria.
 
 ```{r}
+
+edge_indices <- graph %>%
+  activate(edges) %>%
+  as_tibble()
+
+# Estrai nodi con i loro nomi
+node_names <- graph %>%
+  activate(nodes) %>%
+  as_tibble() %>%
+  mutate(node_idx = row_number()) %>%
+  select(node_idx, name, category)
+
+# Mappa gli indici ai nomi reali
+edge_table_named <- edge_indices %>%
+  left_join(node_names %>% select(from = node_idx, from_name = name), by = "from") %>%
+  left_join(node_names %>% select(to = node_idx, to_name = name), by = "to") %>%
+  select(from = from_name, to = to_name)
 
 # Controllo che paper_id sia di tipo character
 content_nodes2 <- content_nodes %>%
@@ -312,7 +334,7 @@ print(intra_citations)
 
 ```
 
-## 11 : Salvataggio oggetti per analisi successive
+## 8 : Salvataggio oggetti per analisi successive
 
 ```{r}
 dir_processed <- "../data/processed"

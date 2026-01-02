@@ -6,7 +6,2732 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 ```
 
+## Introduzione
+
+Questo documento presenta l'analisi della Cora Citation network.
+
+A tal scopo, essa viene svolta andando a rispondere a delle domande che guideranno l'analisi. 
+
+### Domande 
+  
+  - Network quick view
+  
+  1 : Qual è il numero di paper in ogni categoria ?
+
+  2 : Qual è la distribuzione del numero di citazioni fatte dai paper ?
+
+  3 : Per ogni catgoria, quante sono le citazioni verso la stessa categoria ?
+
+  4.1 : Quali sono le top coppie di paper con più paper citati in comune ? (common successors)
+  4.2 : Quali sono le top coppie di paper con più paper citanti in comune ? (common predecessors)
+
+  - Centrality
+
+  5 : Analizza i top paper per PageRank e scopri se tale valore è principalmente causato da : 
+      
+    * numero di link che riceve 
+    * centralità dei nodi da cui riceve i link
+    * quanto i nodi da cui si ricevono i link sono propensi a linkar altri nodi
+
+  6 : Analizza Authority ed Hub score per capire quali paper risultano maggiormente influenti. 
+
+
+  7 : Identifica categorie potenti che non sono centrali e categorie centrali che non sono potenti.
+
+
+  8 : Visualizzare la rete tra categorie con la dimensione dei nodi proporzionale alla power e alla centralità, colore archi proporzionale al flusso di citazioni.
+
+  
+  - Similarity ed eterogenity
+
+
+  9 : I paper con alta centralità tendono ad essere interdisciplinari ?
+
+  10 : I paper interdisciplinari (alto Rao da out-degree) sono più influenti (alto in-degree/PageRank) ?
+
+  11 : Quali categorie producono i paper più interdisciplinari ? E quali beneficiano di più dai ponti interdisciplinari?
+
+
+  - Group Analysis
+
+  12 : Identifica le comunità di paper e verifica se esse coincidono con le categorie scientifiche (ground truth). 
+      Se no, quale divisione in gruppi risulta esser più adatta alla rete ?  Quella iniziale (categorie) o quella trovata (communities) ? 
+
+  13 : Quali categorie sono più pure ? (una sola community o meno possibili)
+
+
+  - Global Analysis
+
+  14 : Studia i K-connected components e verifica se i gruppi con connettività più alta sono composti da soli paper di una stessa catgoria.
+
+  15 : Analizza gli SCC per verificare l'aciclicità della rete. 
+  
+  16 : Verifica lo Small-World Effect sul grafo non diretto.
+  
+  17 : Verifica che la Assortativity by category sia molto alta (dato che ho tante citazioni intra-categoria)
+  
+  18 : Verifica se l’elite delle pubblicazioni crea un “club” chiuso
+
+## Carico le librerie 
+
+```{r}
+library(igraph)
+library(dplyr)
+library(tidygraph)
+library(ggrepel)
+library(ggplot2)
+library(ggraph)
+library(Matrix)
+library(corrplot)
+library(tidyr)
+library(knitr)
+```
+
+## Fase preliminare : lettura e filtraggio di Nodi ed Edges
+
+Costruisco il grafo di citazioni Cora a partire dai file raw di nodi e archi
+
+```{r}
+
+# Percorsi dati
+data_raw_dir <- "../data/raw"
+cora_content_file <- file.path(data_raw_dir, "cora.content")
+cora_cites_file <- file.path(data_raw_dir, "cora.cites")
+
+
+# Lettura nodi
+content_df <- read.table(cora_content_file, header = FALSE, stringsAsFactors = FALSE, fill = TRUE)
+category_col <- ncol(content_df)
+
+content_nodes <- data.frame(
+  paper_id = content_df[, 1],
+  category = content_df[, category_col],
+  stringsAsFactors = FALSE
+)
+
+cat("Letti paper:", nrow(content_nodes), "\n")
+cat("Categorie:", unique(content_nodes$category), "\n\n")
+
+
+# Lettura edges
+cites_df <- read.table(cora_cites_file, header = FALSE, stringsAsFactors = FALSE)
+colnames(cites_df) <- c("paper_cited", "paper_citing")
+
+
+edges <- cites_df %>%
+  rename(from = paper_citing, to = paper_cited)
+
+cat("Numero di archi (citazioni) trovate :", nrow(cites_df), "\n\n")
+
+
+graph_igraph <- graph_from_data_frame(
+  d = edges,
+  vertices = content_nodes,
+  directed = TRUE
+)
+
+graph <- as_tbl_graph(graph_igraph)
+
+```
+
+## Domanda 1 : Qual è il numero di paper in ogni categoria ? 
+
+```{r}
+
+category_table <- content_nodes %>%
+  group_by(category) %>%
+  summarise(numero_paper = n()) %>%
+  arrange(desc(numero_paper))
+
+print(category_table)
+
+```
+Vngono mostrati i numeri nella tabella sopra riportata.
+
+## Domanda 2 : Qual è la distribuzione del numero di citazioni fatte dai paper ?
+
+```{r}
+out_deg <- degree(graph_igraph, mode = "out")
+
+outdeg_table <- as.data.frame(table(out_deg))
+colnames(outdeg_table) <- c("citazioni_fatte", "numero_paper")
+
+# Percentuale di nodi con quel out-degree
+outdeg_table$perc_nodi <- round(
+  100 * outdeg_table$numero_paper / sum(outdeg_table$numero_paper),
+  2
+)
+
+
+# Converto citazioni_fatte in numerico
+outdeg_table$citazioni_fatte <- as.numeric(as.character(outdeg_table$citazioni_fatte))
+
+# Filtro fino a 7 citazioni per zoom
+outdeg_zoom <- outdeg_table[outdeg_table$citazioni_fatte <= 7, ]
+
+# Calcolo % dei paper con >7 citazioni
+perc_oltre7 <- sum(outdeg_table$perc_nodi[outdeg_table$citazioni_fatte > 7])
+
+# Plot distribuzione out-degree (zoom 0-7)
+ggplot(outdeg_zoom, aes(x = citazioni_fatte, y = perc_nodi)) +
+  geom_col(fill = "#3182bd", width = 0.7) +
+  geom_text(aes(label = paste0(perc_nodi, "%")),
+            vjust = -0.3, size = 3.8, fontface = "bold") +
+  scale_x_continuous(breaks = 0:7) +
+  labs(title = "Distribuzione del numero di citazioni fatte (out-degree)",
+       subtitle = paste0("Zoom 0-7 citazioni | Paper con >7 citazioni: ", 
+                        round(perc_oltre7, 2), "%"),
+       x = "Citazioni fatte dal paper",
+       y = "Percentuale di paper (%)") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 15),
+        plot.subtitle = element_text(hjust = 0.5, size = 11, color = "gray40"),
+        panel.grid.major.x = element_blank())
+
+```
+
+Quasi la metà dei paper totali non cita alcun altro paper.
+
+
+## Domanda 3 : Per ogni catgoria, quante sono le citazioni verso la stessa categoria ? 
+
+Numero di volte che un paper, di una certa categoria, cita un paper che sta nella stessa categoria.
+
+```{r}
+edge_indices <- graph %>%
+  activate(edges) %>%
+  as_tibble()
+
+# Prendo solo i nodi con i loro nomi
+node_names <- graph %>%
+  activate(nodes) %>%
+  as_tibble() %>%
+  mutate(node_idx = row_number()) %>%
+  select(node_idx, name, category)
+
+# Mappp poi gli indici ai nomi reali
+edge_table_named <- edge_indices %>%
+  left_join(node_names %>% select(from = node_idx, from_name = name), by = "from") %>%
+  left_join(node_names %>% select(to = node_idx, to_name = name), by = "to") %>%
+  select(from = from_name, to = to_name)
+
+# Controllo che paper_id sia di tipo character
+content_nodes2 <- content_nodes %>%
+  mutate(paper_id = as.character(paper_id))
+
+edges_with_cat <- edge_table_named %>%
+  left_join(content_nodes2, by = c("from" = "paper_id")) %>%
+  rename(from_cat = category) %>%
+  left_join(content_nodes2, by = c("to" = "paper_id")) %>%
+  rename(to_cat = category)
+
+# Calcolo citazioni intra-disciplinari
+num_intra <- edges_with_cat %>% 
+  filter(from_cat == to_cat) %>% 
+  nrow()
+
+# Calcolo le citazioni totali
+num_total <- nrow(edges_with_cat)
+
+# Calcolo della percentuale
+perc_intra <- 100 * num_intra / num_total
+
+# Calcolo citazioni totali per categoria
+total_citations_per_cat <- edges_with_cat %>%
+  group_by(from_cat) %>%
+  summarise(citazioni_totali = n(), .groups = "drop")
+
+# Calcolo delle citazioni intra-disciplinari per categoria
+intra_citations <- edges_with_cat %>%
+  filter(from_cat == to_cat) %>%
+  group_by(from_cat) %>%
+  summarise(citazioni_intra = n(), .groups = "drop") %>%
+  left_join(total_citations_per_cat, by = "from_cat") %>%
+  mutate(perc_intra = round(100 * citazioni_intra / citazioni_totali, 2)) %>%
+  arrange(desc(perc_intra))
+
+print(intra_citations)
+
+cat("Citazioni intra-disciplinari:", num_intra, "\n")
+cat("Citazioni totali:", num_total, "\n")
+cat(sprintf("Percentuale citazioni intra-disciplinari: %.2f%%\n", perc_intra))
+
+
+```
+  
+La percentuale di citazioni intra-categoria complessiva è di circa : 81.38%
+
+Invece quelle in merito ad ogni categoria son mostrate nella tabella, in cui Genetic_Algorithms ha la percentual maggiore.
+
+## Domanda 4.1 : Quali sono le top coppie di paper con più paper citati in comune ? (common successors)
+## Domanda 4.2 : Quali sono le top coppie di paper con più paper citanti in comune ? (common predecessors)
+
+
+Trovo coppie di paper che condividono molti citati / citanti usando le proiezioni della matrice di adiacenza.
+  
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Matrice di adiacenza (sparsa)
+A <- as_adj(graph, sparse = TRUE)
+
+# Matrice dei paper citati in comune (successori comuni)
+common_cited <- as.matrix(A %*% t(A))
+diag(common_cited) <- 0
+
+# Matrice dei paper citanti in comune (predecessori comuni)
+common_citing <- as.matrix(t(A) %*% A)
+diag(common_citing) <- 0
+
+# Aggiungo gli ID reali come nomi di righe e colonne
+rownames(common_cited) <- V(graph)$name
+colnames(common_cited) <- V(graph)$name
+
+rownames(common_citing) <- V(graph)$name
+colnames(common_citing) <- V(graph)$name
+
+
+
+# Funzione per estrarre top N coppie
+get_top_pairs <- function(mat, topn = 10) {
+  # Prendi solo triangolo superiore
+  mat[lower.tri(mat, diag = TRUE)] <- 0
+  
+  # Converti in formato "long"
+  pairs <- which(mat > 0, arr.ind = TRUE)
+  values <- mat[pairs]
+  
+  # Ordina e prendi top N
+  top_idx <- order(values, decreasing = TRUE)[1:min(topn, length(values))]
+  
+  data.frame(
+    paper_i = rownames(mat)[pairs[top_idx, 1]],
+    paper_j = colnames(mat)[pairs[top_idx, 2]],
+    shared = values[top_idx]
+  )
+}
+
+
+# Top coppie
+top10_cited <- get_top_pairs(common_cited, 10)
+top10_citing <- get_top_pairs(common_citing, 10)
+
+(top10_cited)
+(top10_citing)
+
+```
+
+
+La top coppia con più paper citati in comune (pari a 20) è : 114 - 6213
+
+La top coppia con più paper citanti in comune (pari a 5) è : 63832 - 1104999
+
+## Domanda 5 : Analizza i top paper per PageRank e scopri se tale valore è principalmente causato da : 
+      
+* numero di link che riceve 
+* centralità dei nodi da cui riceve i link
+* quanto i nodi da cui si ricevono i link sono propensi a linkar altri nodi
+
+
+Calcolo dapprima queste misure di centralità : indegree, outdegree e pagerank.
+Le aggiungo poi come attributi dei nodi.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+graph <- graph %>%
+  activate(nodes) %>%
+  mutate(
+    indegree = centrality_degree(mode = "in"),
+    outdegree = centrality_degree(mode = "out"),
+    pagerank = centrality_pagerank()
+  )
+
+```
+
+Calcolo ora varie statistiche.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Filtro e prendo solo i primi 10 paper per PageRank
+top_pagerank <- graph %>%
+  as_tibble() %>%
+  arrange(desc(pagerank)) %>%
+  select(name, category, pagerank, indegree, outdegree) %>%
+  head(10)
+
+
+# Ottiengo i nodi con indice e attributi
+nodes_data <- graph %>%
+  activate(nodes) %>%
+  as_tibble() %>%
+  mutate(node_idx = row_number())
+
+# Calcolo le statistiche dei predecessori (chi cita) per ogni nodo
+predecessor_stats <- graph %>%
+  activate(edges) %>%
+  as_tibble() %>%
+  # Join con nodes_data per ottenere PageRank e outdegree dei "from" (chi cita)
+  left_join(
+    nodes_data %>% select(from = node_idx, pr_citing = pagerank, out_citing = outdegree),
+    by = "from"
+  ) %>%
+  # Raggruppo per "to" (chi viene citato) e calcola medie E massimo
+  group_by(to) %>%
+  summarise(
+    avg_pr_citing = mean(pr_citing, na.rm = TRUE),
+    max_pr_citing = max(pr_citing, na.rm = TRUE),  # NUOVO: max PageRank
+    avg_outdegree_citing = mean(out_citing, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # Converto "to" da indice a nome
+  left_join(nodes_data %>% select(to = node_idx, name), by = "to") %>%
+  select(name, avg_pr_citing, max_pr_citing, avg_outdegree_citing)
+
+# Aggiungo infine queste statistiche ai top paper
+top_pagerank_complete <- top_pagerank %>%
+  left_join(predecessor_stats, by = "name")
+
+print(top_pagerank_complete)
+
+
+```
+
+* numero di link che riceve : 
+
+  - i top 10 papers hanno mediamente un alto indice
+
+* centralità dei nodi da cui riceve i link : 
+  
+  - spesso vi è la presenza di un nodo molto centrale che spesta in alto la media delle citazioni ricevute da quel paper 
+
+* quanto i nodi da cui si ricevono i link sono propensi a linkar altri nodi :
+  
+  - Non tutti, ma solo alcuni paper tra i top per pagerank ricevono citazioni da paper molto propensi a citare.
+    Esempio ne sono i paper 578347 e 578309 di Neural_Networks con 10 e 10,4, o 95719 di Probabilistic_Methods con 15.
+
+## Domanda 6 : Analizza Authority ed Hub score per capire quali paper risultano maggiormente influenti. 
+
+Calcolo di HITS (Hub e Authority scores)
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+hits_result <- authority_score(graph, scale = TRUE)
+hub_result <- hub_score(graph, scale = TRUE)
+
+# Aggiungo entrambi ai nodi del grafo
+graph <- graph %>%
+  mutate(
+    authority = hits_result$vector,
+    hub = hub_result$vector
+  )
+
+```
+
+Da analisi precedenti sappiamo che ogni paper riceve al massimo 5 citazioni in totale. 
+
+Ciò si traduce nel fatto che un paper per essere un hub, ha solo 5 link a disposizione al massimo e deve cercare di linkare più authorities possibili.   
+
+### Top 10 Authorities (paper autorevoli)
+
+```{r}
+
+# Calcolo in-degree per ogni paper
+indegree_per_paper <- graph %>%
+  activate(nodes) %>%
+  mutate(indegree = centrality_degree(mode = "in")) %>%
+  as_tibble() %>%
+  select(name, indegree)
+
+# Filtro per tenere solo gli hub con hub score > 0.5
+high_hubs <- graph %>%
+  as_tibble() %>%
+  filter(hub > 0.5) %>%
+  pull(name)
+
+# Vedo se ogni paper è stato citato da almeno un high hub
+cited_by_high_hub <- edges_with_cat %>%
+  filter(from %in% high_hubs) %>%
+  distinct(to) %>%
+  mutate(citato_da_hub = TRUE)
+
+# Creo la tabella top authority con la nuova colonna
+top_authority <- graph %>%
+  as_tibble() %>%
+  arrange(desc(authority)) %>%
+  select(name, authority, category) %>%
+  head(10) %>%
+  left_join(indegree_per_paper, by = "name") %>%
+  left_join(cited_by_high_hub, by = c("name" = "to")) %>%
+  mutate(citato_da_hub = ifelse(is.na(citato_da_hub), FALSE, citato_da_hub)) %>%
+  select(name, category, authority, indegree, citato_da_hub)
+
+print(top_authority)
+
+```
+
+Nella tabella emerge il fatto che i paper con l'authority maggiore appartengono tutti alla categoria Genetic_Algorithms.
+
+### Top 10 Hub (paper che linkano autorità)
+
+```{r}
+# Calcolo dell' out-degree per ogni paper
+outdegree_per_paper <- graph %>%
+  activate(nodes) %>%
+  mutate(outdegree = centrality_degree(mode = "out")) %>%
+  as_tibble() %>%
+  select(name, outdegree)
+
+# Vedo il numero di categorie diverse citate da ogni paper
+diverse_cat_cited <- edges_with_cat %>%
+  group_by(from) %>%
+  summarise(num_cat_diverse_citate = n_distinct(to_cat), .groups = "drop")
+
+# Calcolo delle citazioni verso la stessa categoria
+citazioni_stessa_cat <- edges_with_cat %>%
+  filter(from_cat == to_cat) %>%
+  group_by(from) %>%
+  summarise(citazioni_stessa_cat = n(), .groups = "drop")
+
+# Creo infin la tabella top hub con le nuove colonne
+top_hub <- graph %>%
+  as_tibble() %>%
+  arrange(desc(hub)) %>%
+  select(name, hub, category) %>%
+  head(10) %>%
+  left_join(outdegree_per_paper, by = "name") %>%
+  left_join(diverse_cat_cited, by = c("name" = "from")) %>%
+  left_join(citazioni_stessa_cat, by = c("name" = "from")) %>%
+  mutate(
+    num_cat_diverse_citate = ifelse(is.na(num_cat_diverse_citate), 0, num_cat_diverse_citate),
+    citazioni_stessa_cat = ifelse(is.na(citazioni_stessa_cat), 0, citazioni_stessa_cat),
+    perc_verso_stessa_cat = ifelse(outdegree > 0, round(100 * citazioni_stessa_cat / outdegree, 2), 0)
+  ) %>%
+  select(name, category, hub, outdegree, num_cat_diverse_citate, perc_verso_stessa_cat)
+
+print(top_hub)
+
+```
+
+Nella tabella vediamo come l'unico Hub con score > 0.5 è il paper 35, il quale cita moltissimi paper.
+
+In questo caso abbiamo mostrato il bias di Hits, ossia che favorisce le comunità densamente connesse.
+
+Ho infatti che Genetic_Algorithms risulta esser la categoria con la percentuale maggiore di citazioni intra categoria (circa il 90%).
+
+## Domanda 7 : Identifica categorie potenti che non sono centrali e categorie centrali che non sono potenti.
+
+Calcolo dapprima la katz Centrality
+
+```{r}
+
+A <- as_adjacency_matrix(graph, sparse = TRUE)
+eig <- eigen(A)$values
+r = max(abs(eig))
+alpha <- 0.85 / r
+katz <- alpha_centrality(graph, alpha = alpha)
+
+# Aggiungo come attributo dei nodi la Katz calcolata
+graph <- graph %>%
+  mutate(katz = katz)
+
+```
+
+Calcolo poi la Power con questa funzione.
+
+```{r}
+power <- function(A, t) {
+  n <- dim(A)[1]
+  x_0 <- rep(0, n)
+  x_1 <- rep(1, n)
+  x_2 <- rep(1, n)
+  diff <- 1
+  eps <- 1 / 10^t
+  iter <- 0
+  max_iter <- 1000
+  
+  while (!is.na(diff) && diff > eps && iter < max_iter) {
+    x_0 <- x_1
+    x_1 <- x_2
+    
+    temp <- (1 - x_2) %*% A
+    
+    # Controllo valori invalidi
+    if (any(is.na(temp)) || any(is.nan(temp)) || any(is.infinite(temp))) {
+      stop("Valori non numerici (NA/NaN/Inf) rilevati durante l'iterazione power centrality")
+    }
+    
+    x_2 <- as.vector(temp)
+    
+    # Normalizzazione vettore
+    max_abs <- max(abs(x_2))
+    if (max_abs > 0) {
+      x_2 <- x_2 / max_abs
+    }
+    
+    diff <- sum(abs(x_2 - x_0))
+    iter <- iter + 1
+  }
+  
+  if (is.na(diff)) stop("Diff is NA durante l'iterazione")
+  return(list(vector = as.vector(x_2), iter = iter))
+}
+
+
+
+# Conversione matrice sparsa in densa
+A_dense <- as.matrix(A)
+
+damping <- 0.15
+n <- nrow(A_dense)
+I <- diag(damping, n)
+Ad <- A_dense + I
+
+# Calcolo Power centrality
+p <- power(Ad, 6)$vector
+
+# Aggiungo poi al grafo
+graph <- graph %>%
+  mutate(power = p)
+
+```
+
+Aggrego Katz e Power per categoria
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+category_stats <- data.frame(
+    category = V(graph)$category,
+    katz = katz,
+    power = p) %>%
+  group_by(category) %>%
+  summarise(
+    avg_katz = mean(katz),
+    avg_power = mean(power),
+    n_papers = n()
+  ) %>%
+  ungroup()
+
+# Calcolo le soglie usando la mediana
+threshold_katz <- median(category_stats$avg_katz)
+threshold_power <- median(category_stats$avg_power)
+
+# Classifico le categorie nei 4 quadranti
+category_stats <- category_stats %>%
+  mutate(
+    is_central = avg_katz > threshold_katz,
+    is_powerful = avg_power > threshold_power,
+    quadrant = case_when(
+      is_central & is_powerful ~ "Central & Powerful",
+      is_central & !is_powerful ~ "Central but NOT Powerful",
+      !is_central & is_powerful ~ "Powerful but NOT Central",
+      TRUE ~ "Neither Central nor Powerful"
+    )
+  )
+
+
+ggplot(category_stats, aes(x = avg_katz, y = avg_power, color = quadrant)) +
+  geom_point(size = 5) +
+  geom_text(aes(label = category), vjust = -0.8, size = 3.5, color = "black") +
+  geom_vline(xintercept = threshold_katz, linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = threshold_power, linetype = "dashed", color = "gray50") +
+  scale_color_manual(values = c(
+    "Central & Powerful" = "darkgreen",
+    "Central but NOT Powerful" = "blue",
+    "Powerful but NOT Central" = "red",
+    "Neither Central nor Powerful" = "gray60"
+  )) +
+  labs(
+    x = "Average Katz Centrality",
+    y = "Average Power Centrality",
+    title = "Categorie: Katz (Centrale) vs Power (Potente)",
+    color = "Quadrante"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+
+```
+
+Una categoria "mediamente" potente e per nulla centrale è la Rule_Learning.
+
+Invece la categoria più centrale possibile  rimanndo a "mediamente" e bassa power è Probabilistic_Methods.
+
+Studiando la Correlazione di Kendall tra Katz e Power ottengo che : 
+
+```{r}
+cor(katz, p, method="kendall")
+```
+
+La correlazione di Kendall tra Katz e Power è circa 0.56
+
+Dunque i due indici sono legati ma misurano aspetti leggermente diversi della centralità.
+
+Mostro ora la rete dei paper.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+nodes <- graph %>% activate(nodes) %>% as_tibble()
+
+# Calcolo i quantili al 75% per Katz e Power:
+
+q_katz <- quantile(nodes$katz, 0.75)
+q_power <- quantile(nodes$power, 0.75)
+
+
+top_nodes <- nodes %>% filter(katz > q_katz | power > q_power)
+
+ggplot(nodes, aes(x = katz, y = power, color = category)) +
+  geom_point(alpha = 0.5, size = 2) +
+  geom_label_repel(data = top_nodes, aes(label = name), 
+                   max.overlaps = 15, size = 3) +
+  geom_hline(yintercept = q_power, linetype = "dashed", alpha = 0.5) +
+  geom_vline(xintercept = q_katz, linetype = "dashed", alpha = 0.5) +
+  scale_color_brewer(palette = "Set2") +
+  labs(title = "Confronto Katz e Power Centrality per Categoria",
+       x = "Katz Centrality", y = "Power Centrality",
+       color = "Categoria") +
+  theme_minimal()
+
+```
+
+Spiccano i paper della categoria Probabilistic_Methods come maggiormente centrali e potenti.
+
+## Domanda 8 : Visualizza la rete tra categorie con colore degli archi proporzionale al flusso di citazioni.
+
+  * Plot 1 : dimensione dei nodi proporzionale alla Power
+  
+  * Plot 2 : dimensione dei nodi proporzionale alla Katz Centrality
+
+Nota che ho normalizzato i valori così da rendere i plot più esplicativi.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Creo ala matrice del flusso di citazioni tra categorie
+categories <- sort(unique(V(graph)$category))
+flow_matrix <- matrix(0, nrow = length(categories), ncol = length(categories),
+                      dimnames = list(categories, categories))
+
+# Popolo la matrice contando le citazioni tra categorie
+edgelist <- get.edgelist(graph, names = FALSE)
+for (i in 1:nrow(edgelist)) {
+  from_cat <- V(graph)$category[edgelist[i, 1]]
+  to_cat <- V(graph)$category[edgelist[i, 2]]
+  flow_matrix[from_cat, to_cat] <- flow_matrix[from_cat, to_cat] + 1
+}
+# Elimino i self-loops
+diag(flow_matrix) <- 0  
+
+# Creo poi il grafo delle categorie
+g_cat <- graph_from_adjacency_matrix(flow_matrix, mode = "directed", weighted = TRUE)
+
+# Normalizzo Katz e Power 
+V(g_cat)$avg_katz <- category_stats$avg_katz[match(V(g_cat)$name, category_stats$category)]
+V(g_cat)$avg_power <- category_stats$avg_power[match(V(g_cat)$name, category_stats$category)]
+
+V(g_cat)$katz_norm <- (V(g_cat)$avg_katz - min(V(g_cat)$avg_katz)) /
+                      (max(V(g_cat)$avg_katz) - min(V(g_cat)$avg_katz))
+V(g_cat)$power_norm <- (V(g_cat)$avg_power - min(V(g_cat)$avg_power)) /
+                       (max(V(g_cat)$avg_power) - min(V(g_cat)$avg_power))
+
+# Dimensioni nodi normalizzate
+V(g_cat)$size_katz <- 15 + 35 * V(g_cat)$katz_norm
+V(g_cat)$size_power <- 15 + 35 * V(g_cat)$power_norm
+
+# Colori e spessore archi basati sul peso
+weight_breaks <- quantile(E(g_cat)$weight, probs = seq(0, 1, 0.2))
+E(g_cat)$weight_class <- cut(E(g_cat)$weight, breaks = weight_breaks,
+                              labels = c("Molto Basse", "Basse", "Medie", "Alte", "Molto Alte"),
+                              include.lowest = TRUE)
+
+edge_colors <- c("Molto Basse" = "#fee5d9", "Basse" = "#fcae91", "Medie" = "#fb6a4a",
+                 "Alte" = "#de2d26", "Molto Alte" = "#a50f15")
+
+E(g_cat)$color <- edge_colors[E(g_cat)$weight_class]
+E(g_cat)$width <- 1 + 5 * E(g_cat)$weight / max(E(g_cat)$weight)
+
+# Layout circolare
+layout_cat <- layout_in_circle(g_cat)
+
+
+```
+
+Vediamo ora 2 plot : 
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# PLOT 1: Katz - Valori normalizzati
+
+plot(
+  g_cat,
+  vertex.size = V(g_cat)$size_katz,
+  vertex.color = "steelblue",
+  vertex.label = V(g_cat)$name,
+  vertex.label.cex = 0.85,
+  vertex.label.color = "black",
+  vertex.label.dist = 0,
+  vertex.frame.color = "black",
+  edge.width = E(g_cat)$width,
+  edge.arrow.size = 0.8,
+  edge.color = E(g_cat)$color,
+  edge.curved = 0.1,
+  layout = layout_cat,
+  main = "Network tra Categorie - Dimensione = Katz Centrality",
+  margin = 0.1
+)
+
+# Legenda con valori fissi 0 e 1
+legend("bottomleft",
+       legend = c("Max Katz: 1.00", "Min Katz: 0.00"),
+       pch = 21, pt.bg = "steelblue", pt.cex = c(2.5, 1), bty = "n",
+       title = "Dimensione nodi (normalizzato)", cex = 1.1)
+
+legend("topright",
+       legend = names(edge_colors),
+       col = edge_colors,
+       lwd = 4,
+       bty = "n",
+       title = "Citation Flow",
+       cex = 1.1)
+
+# PLOT 2: Power - Valori normalizzati
+plot(
+  g_cat,
+  vertex.size = V(g_cat)$size_power,
+  vertex.color = "coral",
+  vertex.label = V(g_cat)$name,
+  vertex.label.cex = 0.85,
+  vertex.label.color = "black",
+  vertex.label.dist = 0,
+  vertex.frame.color = "black",
+  edge.width = E(g_cat)$width,
+  edge.arrow.size = 0.8,
+  edge.color = E(g_cat)$color,
+  edge.curved = 0.1,
+  layout = layout_cat,
+  main = "Network tra Categorie - Dimensione = Power Centrality",
+  margin = 0.1
+)
+
+# Legenda con valori fissi 0 e 1
+legend("bottomleft",
+       legend = c("Max Power: 1.00", "Min Power: 0.00"),
+       pch = 21, pt.bg = "coral", pt.cex = c(2.5, 1), bty = "n",
+       title = "Dimensione nodi (normalizzato)", cex = 1.1)
+
+legend("topright",
+       legend = names(edge_colors),
+       col = edge_colors,
+       lwd = 4,
+       bty = "n",
+       title = "Citation Flow",
+       cex = 1.1)
+
+
+```
+
+Ho che Genetic_Alghoritms e Reinforcement learning son quelli sia più potenti che centrali. 
+
+Poi possiamo notare come Neural_Ntwork, pur essendo poco potente e centrale, riceve e invia molte più citazioni rispetto a Genetic_Alghoritms che invece è molto più centrale e potente.
+
+## Domanda 9 : I paper con alta centralità tendono ad essere interdisciplinari ?
+
+Per poter rispondere, serve dapprima capire quando un paper può esser considerato interdisciplinare.
+
+Iniziamo col dire che un nodo è eterogeneo se è dissimile dai vicini.
+
+L'eterogeneità può essere integrata nella centralità.
+Infatti i nodi che ricevono archi da nodi tra loro eterogenei, sono considerati più importanti rispetto a quelli che ricevono archi da nodi molto simili tra loro.
+
+
+Per fare ciò, sfruttiamo la Rao Quadratic Entropy, ove l'idea è che Rao è grande quando:
+
+  - La distribuzione è uniforme (distribuzione su molti elementi)
+
+  - Gli elementi sono molto diversi tra loro (dissimilarità alta)
+
+### Calcolo della Rao Quadratic Entropy
+
+Per un grafo diretto (come quello che abbiamo qui), ho 2 opzioni per definire i vicini di un nodo :
+
+  - Out-neighbors (nodi citati): analizzando l'eterogeneità delle categorie che il nodo i cita
+
+  - In-neighbors (nodi citanti): analizzando l'eterogeneità delle categorie che citano il nodo i
+
+Nel contesto di un citation network, l'opzione che io reputo più sensata è analizzare gli out-neighbors, misurando quanto è interdisciplinare il pattern di citazioni in uscita.
+
+Rao dunque misura quanto sono diverse tra loro le categorie che il paper i cita.
+
+```{r}
+
+node_categories <- V(graph)$category
+categories <- sort(unique(node_categories))
+k <- length(categories)
+n <- vcount(graph)
+
+```
+
+### STEP 1 : Creare una matrice di flusso F 
+
+Per farlo ricorro all'uso della matrice indicatrice C, che vado a creare.
+
+Essa è una matrice n × k (paper × categorie) dove ogni elemento vale:
+
+  * C[i, c] = 1 se il paper i appartiene alla categoria c
+
+  * C[i, c] = 0 altrimenti
+
+F è una (7×7) che rappresenta quante citazioni esistono tra categorie di paper. 
+
+Qui abbiamo 7 categorie e 5429 citazioni totali.
+
+
+Ottengo la matrice di Flusso F in questo modo : 
+
+  * A × C : Prodotto tra matrice di adiacenza (n × n) e matrice indicatrice (n × k) → risultato (n × k)
+
+    Per ogni paper i, conto quanti paper cita in ciascuna categoria
+
+  * t(C) × (A × C) : Prodotto tra C trasposta (k × n) e il risultato precedente (n × k) → risultato (k × k)
+
+    Aggrego poi per categoria di partenza
+
+    F[c1, c2] = somma di tutte le citazioni da paper di categoria c1 a paper di categoria c2
+
+
+```{r}
+
+# Matrice Indicatrice C
+C <- matrix(0, nrow = n, ncol = k)
+colnames(C) <- categories
+
+for (c_idx in 1:k) {
+  C[, c_idx] <- as.numeric(node_categories == categories[c_idx])
+}
+
+# Matrice di flusso F
+F <- t(C) %*% A %*% C
+
+rownames(F) <- categories
+colnames(F) <- categories
+
+```
+
+F rappresenta i "profili di citazione" delle categorie:
+
+  - Ogni riga di F mostra quali categorie una determinata categoria tende a citare
+
+  - Due categorie sono simili se hanno profili di citazione simili (citano le stesse altre categorie in proporzioni simili)
+
+
+### STEP 2 : Cosine Similarity tra categorie
+
+Questo blocco calcola la cosine similarity tra tutte le coppie di categorie. 
+La cosine similarity misura quanto sono simili due categorie in base ai loro "profili di citazione" (quali altre categorie tendono a citare).
+
+La normalizzazione garantisce che la similarità dipenda solo dall'orientamento dei vettori (pattern di citazione), non dalla loro magnitudine (volume totale di citazioni).
+
+```{r}
+
+# Funzione per calcolare norma euclidea di un vettore
+euclidean <- function(x) {sqrt(sum(x^2))}
+
+# Calcolo delle norme euclidee per ogni riga di F
+norms <- apply(F, 1, euclidean)
+
+# Mi creo la matrice diagonale con 1/norma
+D_norm <- diag(1 / norms)
+
+# Per gestire le categorie senza citazioni
+D_norm[!is.finite(D_norm)] <- 0  
+
+# Cosine similarity
+S_cat <- D_norm %*% F %*% t(F) %*% D_norm
+
+rownames(S_cat) <- categories
+colnames(S_cat) <- categories
+
+```
+
+### STEP 3 : Dissimilarità D tra CATEGORIE
+
+```{r}
+
+# Conversione della similarità in dissimilarità
+D <- 1 - S_cat
+
+# Rendo la matrice simmetrica
+D <- (D + t(D)) / 2
+
+# Pongo la diagonale a 0 poichè una categoria non è dissimile da se stessa
+diag(D) <- 0
+
+summary(D[D > 0])
+
+```
+
+Mostro qui la heatmap di Dissimilarità tra Categorie 
+
+```{r}
+
+# Converto in formato long
+D_long <- as.data.frame(as.matrix(D)) %>%
+  mutate(Categoria1 = rownames(.)) %>%
+  pivot_longer(cols = -Categoria1, names_to = "Categoria2", values_to = "Dissimilarita")
+
+ggplot(D_long, aes(x = Categoria1, y = Categoria2, fill = Dissimilarita)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(Dissimilarita, 2)), size = 3) +
+  scale_fill_gradient(low = "lightblue", high = "darkred", 
+                      limits = c(0.7784, 0.9932),
+                      name = "Dissimilarità") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        axis.title = element_blank(),
+        panel.grid = element_blank()) +
+  labs(title = "Heatmap di Dissimilarità tra Categorie") +
+  coord_fixed()
+
+```
+
+Dato che ottengo un valore alto per la Dissimilarità media : 0.911, significa che le categorie sono mediamente molto dissimili tra loro.
+
+Questo è ottimo per la Rao Entropy perché significa che posso distinguere bene l'interdisciplinarità dato che le categorie son ben separate.
+
+
+### STEP 4: Distribuzione CATEGORIE per ogni PAPER
+
+Creare la matrice P che contiene, per ogni paper, la distribuzione di probabilità delle categorie che cita.
+
+Tale distribuzione P è essenziale nella formula di Rao (ha come dimensione : paper x categorie).
+
+```{r}
+
+# Creo una matrice n x 7 piena di 0
+P <- matrix(0, nrow = n, ncol = k)
+colnames(P) <- categories
+
+# Faccio ora un loop sui papers, per ognuno vado a prendere i paper che esso cita
+for (i in 1:n) {
+  
+  # Out-neighbors del paper i (paper citati da i)
+  out_neighbors <- which(A[i, ] > 0)
+  
+  if (length(out_neighbors) > 0) {
+    
+    # Estraggo tutte le categorie dei paper citati
+    neighbor_cats <- node_categories[out_neighbors]
+    
+    # Calcolo le proporzioni per ogni categoria
+    for (c in categories) {
+      
+      # Per ogni categoria, vedo infine P[i, c] che è : il numero di paper citati nella categoria c / totale paper citati
+      P[i, c] <- sum(neighbor_cats == c) / length(out_neighbors)
+    
+      }
+  }
+}
+
+papers_with_citations <- sum(rowSums(P) > 0)
+
+cat("  Matrice P calcolata:", nrow(P), "×", ncol(P), "\n")
+cat("  Paper con almeno 1 citazione out:", papers_with_citations, "\n\n")
+
+```
+
+### STEP 5: Calcolo RAO per ogni PAPER
+ 
+La funzione implementa la formula della Rao Quadratic Entropy in forma matriciale.
+
+Ho che : 
+
+  - p è il vettore di lunghezza k (7 qui) con le proporzioni delle categorie per un singolo paper
+
+  - D è la matrice k × k di dissimilarità tra categorie
+
+
+La funzione diag(p) crea una matrice diagonale k × k con i valori di p sulla diagonale.
+
+```{r}
+
+# Funzione pr calcolare Rao
+rao <- function(p, D) {
+  D_mat <- as.matrix(D)  
+  x <- diag(p) %*% D_mat %*% diag(p)
+  return(sum(as.numeric(x)))
+}
+
+# Applico poi Rao ad ogni riga di P (ogni paper)
+rao_values <- apply(P, 1, function(p_i) rao(p_i, D))
+
+# Assegno infine nomi ai valori Rao
+names(rao_values) <- V(graph)$name
+
+```
+
+### Step 6 : Statistiche : Specializzazione vs Interdisciplinarità
+
+```{r}
+
+# Calcolo la out-degree per ogni nodo
+out_degrees <- degree(graph, mode = "out")
+
+# Classificazione dei paper
+terminali <- sum(out_degrees == 0)
+interdisciplinari <- sum(rao_values > 0)
+specializzati <- sum(out_degrees > 0 & rao_values == 0)
+
+# Verifica totale
+totale <- vcount(graph)
+check_sum <- terminali + interdisciplinari + specializzati
+
+cat("1. Paper TERMINALI (non citano nessuno):\n")
+cat("   Numero:", terminali, "\n")
+cat("   Percentuale:", round(terminali / totale * 100, 2), "%\n")
+
+cat("2. Paper SPECIALIZZATI (citano solo la propria categoria):\n")
+cat("   Numero:", specializzati, "\n")
+cat("   Percentuale:", round(specializzati / totale * 100, 2), "%\n")
+cat("   → Out-degree > 0, ma Rao = 0\n")
+
+cat("3. Paper INTERDISCIPLINARI (citano categorie diverse):\n")
+cat("   Numero:", interdisciplinari, "\n")
+cat("   Percentuale:", round(interdisciplinari / totale * 100, 2), "%\n")
+cat("   → Out-degree > 0 e Rao > 0\n")
+
+cat("TOTALE:\n")
+cat("   Paper totali:", totale, "\n")
+cat("   Somma classificazioni:", check_sum, "\n")
+cat("   Verifica (devono coincidere):", ifelse(totale == check_sum, "✓ OK", "✗ ERRORE"), "\n\n")
+
+
+# Statistiche aggiuntive
+cat("Paper con citazioni out (specializzati + interdisciplinari):\n")
+cat("   Numero:", specializzati + interdisciplinari, "\n")
+cat("   Percentuale:", round((specializzati + interdisciplinari) / totale * 100, 2), "%\n\n")
+
+# Statistiche Rao per paper interdisciplinari
+rao_interdisciplinari <- rao_values[rao_values > 0]
+
+cat("Statistiche Rao per paper interdisciplinari (Rao > 0):\n")
+summary(rao_interdisciplinari)
+
+
+# Distribuzione out-degree per tipo
+cat("Out-degree medio per tipo:\n")
+cat("   Paper specializzati:", round(mean(out_degrees[out_degrees > 0 & rao_values == 0]), 2), "\n")
+cat("   Paper interdisciplinari:", round(mean(out_degrees[rao_values > 0]), 2), "\n\n")
+
+```
+
+Dunque su 1565 paper che almeno 1 citazione ad un altro paper, solo 300 citano paper di una categoria diversa dalla propria. 
+
+
+Interpretazione dei valori : 
+
+  - Rao = 0: Paper che non cita nessuno, oppure cita solo paper di una categoria
+
+  - Rao basso (es. 0.1): Paper specializzato, cita principalmente categorie simili tra loro
+
+  - Rao medio (es. 0.3-0.5): Paper moderatamente interdisciplinare
+
+  - Rao alto (es. > 0.7): Paper fortemente interdisciplinare, cita molte categorie diverse e dissimili
+
+
+### STEP 7 : Aggiungo RAO come attributo del grafo e Calcolo della Betweenness Centrality
+
+```{r}
+
+V(graph)$rao_entropy <- rao_values
+
+graph <- graph %>%
+  activate(nodes) %>%
+  mutate(
+    betweenness = centrality_betweenness()
+  )
+
+```
+
+### STEP 8 : Lavoro ora sul rispondere alla domanda : I paper con alta centralità tendono ad essere interdisciplinari ?
+
+```{r}
+
+# Creo il dataframe completo
+df_analysis <- data.frame(
+  paper = V(graph)$name,
+  category = V(graph)$category,
+  rao_entropy = rao_values,
+  pagerank = V(graph)$pagerank,
+  betweenness = V(graph)$betweenness,
+  degree_out = degree(graph, mode = "out"),
+  stringsAsFactors = FALSE
+)
+
+# Filtro e tengo solo paper con citazioni out (altrimenti Rao = 0 per definizione)
+df_active <- df_analysis[df_analysis$degree_out > 0, ]
+
+
+cat("Dataset per l'analisi:\n")
+cat("  Paper totali:", nrow(df_analysis), "\n")
+cat("  Paper con citazioni out:", nrow(df_active), "\n")
+cat("  (Solo questi possono avere Rao > 0)\n\n")
+
+```
+
+Identificazione dei paper con alta Centralità (ossia nel top 10%).
+
+```{r}
+
+# Definisco una threshold per "alta centralità"
+threshold_pagerank <- quantile(df_active$pagerank, 0.90)
+threshold_betweenness <- quantile(df_active$betweenness, 0.90)
+
+# Classifica paper
+df_active$high_pagerank <- df_active$pagerank >= threshold_pagerank
+df_active$high_betweenness <- df_active$betweenness >= threshold_betweenness
+df_active$high_centrality <- df_active$high_pagerank | df_active$high_betweenness
+
+# Statistiche
+n_high_centrality <- sum(df_active$high_centrality)
+n_low_centrality <- sum(!df_active$high_centrality)
+
+cat("Paper ad ALTA centralità (top 10% PageRank o Betweenness):", n_high_centrality, "\n")
+cat("Paper a BASSA centralità:", n_low_centrality, "\n\n")
+
+cat("Threshold utilizzati:\n")
+cat("  PageRank >= ", format(threshold_pagerank, scientific = TRUE), "\n", sep = "")
+cat("  Betweenness >= ", round(threshold_betweenness, 4), "\n\n", sep = "")
+
+```
+
+Distribuzione Rao Entropy per livello di centralità
+
+```{r}
+
+# Separo i due gruppi
+high_centrality_papers <- df_active[df_active$high_centrality, ]
+low_centrality_papers <- df_active[!df_active$high_centrality, ]
+
+# Statistiche descrittive per ALTA centralità
+cat("Paper ad ALTA centralità (n =", nrow(high_centrality_papers), "):\n")
+summary(high_centrality_papers$rao_entropy)
+
+cat("  % con Rao > 0 (interdisciplinari):", round(sum(high_centrality_papers$rao_entropy > 0) / nrow(high_centrality_papers) * 100, 2), "%\n\n")
+
+# Statistiche descrittive per BASSA centralità
+cat("Paper a BASSA centralità (n =", nrow(low_centrality_papers), "):\n")
+summary(low_centrality_papers$rao_entropy)
+
+cat("  % con Rao > 0 (interdisciplinari):", round(sum(low_centrality_papers$rao_entropy > 0) / nrow(low_centrality_papers) * 100, 2), "%\n\n")
+
+```
+Dunque si, i paper con alta centralità tendono ad essere interdisciplinari rispetto a quelli con un basso livello di centralità.
+
+Mostriamo con un grafico i dati ottenuti.
+
+Grafico : Alta centralità → Maggiore interdisciplinarità
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Preparo i dati per il grafico (manualmente senza tidyr)
+prop_data <- data.frame(
+  Centralita = c("Alta", "Bassa"),
+  Interdisciplinari = c(34.24, 15.67),
+  Specializzati = c(65.76, 84.33)
+)
+
+# Reshape manuale 
+prop_data_long <- data.frame(
+  Centralita = rep(prop_data$Centralita, times = 2),
+  Tipo = rep(c("Interdisciplinari", "Specializzati"), each = 2),
+  Percentuale = c(prop_data$Interdisciplinari, prop_data$Specializzati)
+)
+
+# Barplot
+p1 <- ggplot(prop_data_long, aes(x = Centralita, y = Percentuale, fill = Tipo)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  geom_text(aes(label = paste0(round(Percentuale, 1), "%")),
+            position = position_dodge(width = 0.7),
+            vjust = -0.5, size = 4.5, fontface = "bold") +
+  scale_fill_manual(values = c("Interdisciplinari" = "#06D6A0", 
+                                "Specializzati" = "#EF476F")) +
+  labs(title = "Paper Interdisciplinari per Livello di Centralità",
+       subtitle = "I paper centrali hanno circa 2× più probabilità di essere interdisciplinari",
+       x = "Livello di Centralità",
+       y = "Percentuale (%)",
+       fill = "Tipo di Paper") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold", size = 16),
+        plot.subtitle = element_text(size = 12, color = "gray40"),
+        legend.position = "top") +
+  ylim(0, 100)
+
+print(p1)
+
+
+```
+
+## Domanda 10 : I paper interdisciplinari (alto Rao da out-degree) sono più influenti (alto in-degree/PageRank) ?
+
+Definiamo questa "influenza" usando le metriche di centralità : PageRank, In-degree e Betweenness.
+
+Confronto l'influenza tra paper interdisciplinari (Rao > 0) vs specializzati (Rao = 0).
+
+
+Sto misurando:
+
+  - Input diversity (Rao da out-degree): quanto sono diversificato in ciò che cito
+
+  - Output impact (Influenza da in-degree): quanto impatto ho sugli altri
+
+
+Queste due dimensioni insieme danno un quadro completo della posizione di un paper nella rete.
+
+Nota che Katz e PageRank sono concettualmente simili, lasciamo fuori la Katz Ceantrality da questa analisi. 
+
+
+Recap :
+
+  - PageRank: "quanto sono importanti i miei citatori?"
+
+  - In-degree: "quante citazioni ricevo?"
+
+  - Betweenness: "quanto connetto parti diverse della rete?"
+  
+
+Vediamo ora questi grafici per rispondere alla domanda : 
+
+  Grafico 1 : Betweenness : Paper Interdisciplinari = ponti tra Discipline
+  
+  Grafico 2 : Confronto Multidimensionale: Interdisciplinari vs Specializzati
+  
+  Grafico 3 : Betweenness vs Page rank, focus su interdisciplinari
+  
+  Grafico 4 : Facet per categoria
+
+
+```{r}
+
+# Definisco il tipo in base a Rao
+df_active$tipo <- ifelse(df_active$rao_entropy > 0, "Interdisciplinare", "Specializzato")
+df_active$tipo <- factor(df_active$tipo, levels = c("Specializzato", "Interdisciplinare"))
+
+# Calcolo le medie di betweenness per i due gruppi
+inter_betweenness <- df_active %>%
+  filter(rao_entropy > 0, !is.na(betweenness)) %>%
+  summarise(m = mean(betweenness)) %>%
+  pull(m)
+
+spec_betweenness <- df_active %>%
+  filter(rao_entropy == 0, !is.na(betweenness)) %>%
+  summarise(m = mean(betweenness)) %>%
+  pull(m)
+
+```
+
+### Grafico 1 : Betweeness
+  
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+betw_data <- data.frame(
+  Tipo = factor(c("Interdisciplinari", "Specializzati"), 
+                levels = c("Specializzati", "Interdisciplinari")),
+  Betweenness = c(inter_betweenness, spec_betweenness),
+  Label = c(paste0(round(inter_betweenness, 1)), 
+            paste0(round(spec_betweenness, 1)))
+)
+
+p1 <- ggplot(betw_data, aes(x = Tipo, y = Betweenness, fill = Tipo)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = Label),
+            vjust = -0.5, size = 7, fontface = "bold") +
+  scale_fill_manual(values = c("Specializzati" = "#EF476F",
+                                "Interdisciplinari" = "#06D6A0")) +
+  labs(title = "Paper Interdisciplinari = PONTI tra Discipline",
+       subtitle = "Betweenness 10× più alta → ruolo critico di connettore",
+       x = "",
+       y = "Betweenness Centrality (media)") +
+  theme_minimal(base_size = 15) +
+  theme(plot.title = element_text(face = "bold", size = 18, hjust = 0.5),
+        plot.subtitle = element_text(size = 13, color = "gray40", hjust = 0.5),
+        legend.position = "none",
+        axis.text = element_text(size = 13, face = "bold")) +
+  annotate("segment", 
+           x = 1, xend = 2, 
+           y = max(betw_data$Betweenness) * 0.7,
+           yend = max(betw_data$Betweenness) * 0.7,
+           arrow = arrow(ends = "both", length = unit(0.3, "cm")),
+           color = "darkred", size = 1.2) +
+  annotate("text", 
+           x = 1.5, 
+           y = max(betw_data$Betweenness) * 0.75,
+           label = "10× più alta!", 
+           size = 6, 
+           fontface = "bold", 
+           color = "darkred")
+
+print(p1)
+
+
+```
+I paper interdisciplinari (Rao > 0) hanno una Betweenness Centrality molto più alta.
+
+Il che sembra snsato in quanto si troveranno a connettere parti distinte della rete molto più dei paper specializzati.
+
+### Grafico 2 : Confronto Multidimensionale: Interdisciplinari vs Specializzati
+ 
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Se gli specializzati hanno valore 100, quanto hanno gli interdisciplinari ?  
+comparison_data <- data.frame(
+  Metrica = rep(c("PageRank\n(Popolarità)", 
+                  "In-degree\n(Citazioni)", 
+                  "Betweenness\n(Ruolo ponte)"), each = 2),
+  Tipo = rep(c("Specializzati", "Interdisciplinari"), times = 3),
+  Valore_Norm = c(
+    # PageRank (normalizzato al valore specializzati = 100)
+    100, 72,
+    # In-degree
+    100, 95,
+    # Betweenness
+    100, 1119
+  )
+)
+
+comparison_data$Tipo <- factor(comparison_data$Tipo, 
+                                levels = c("Specializzati", "Interdisciplinari"))
+
+p2 <- ggplot(comparison_data, aes(x = Metrica, y = Valore_Norm, fill = Tipo)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "black", alpha = 0.5) +
+  geom_text(aes(label = ifelse(Valore_Norm > 150, Valore_Norm, "")),
+            position = position_dodge(width = 0.7),
+            vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("Specializzati" = "#EF476F",
+                                "Interdisciplinari" = "#06D6A0")) +
+  labs(title = "Confronto Multidimensionale: Interdisciplinari vs Specializzati",
+       subtitle = "Valori normalizzati (Specializzati = 100)",
+       x = "",
+       y = "Valore Relativo (Specializzati = 100)",
+       fill = "") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 12, color = "gray40", hjust = 0.5),
+        legend.position = "top",
+        axis.text.x = element_text(size = 11))
+
+print(p2)
+
+
+```
+Questa maggiore influenza dei paper Interdisciplinari è evidenziata quasi solo nel caso della Betweenness Centrality. 
+
+### Grafico 3: Focus solo sui paper interdisciplinari
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Aggiungo  la colonna 'tipo'
+if (!"tipo" %in% names(df_active)) {
+  df_active$tipo <- ifelse(df_active$rao_entropy > 0, "Interdisciplinare", "Specializzato")
+  df_active$tipo <- factor(df_active$tipo, levels = c("Specializzato", "Interdisciplinare"))
+}
+
+
+# Evidenzio solo gli interdisciplinari
+df_active$highlight <- df_active$tipo == "Interdisciplinare"
+
+
+p_highlight <- ggplot(df_active, aes(x = pagerank * 10000, y = betweenness)) +
+  
+  # Primo layer: specializzati in grigio
+  geom_point(data = df_active[!df_active$highlight, ],
+             color = "gray70", shape = 16, size = 3, alpha = 0.4) +
+  
+  # Secondo layer: interdisciplinari colorati
+  geom_point(data = df_active[df_active$highlight, ],
+      aes(color = category),
+    shape = 15, size = 5, alpha = 0.9) +
+    scale_color_brewer(palette = "Set2", name = "Categoria\n(Interdisciplinari)") +
+    labs(title = "Paper Interdisciplinari: Ponti tra Discipline",
+      subtitle = "■ Colorati = Interdisciplinari | ● Grigi = Specializzati (background)",
+       x = "PageRank (×10000)",
+       y = "Betweenness Centrality") +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(face = "bold", size = 17, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, color = "gray40", hjust = 0.5),
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 6)))
+
+print(p_highlight)
+
+
+
+```
+Varie categorie presentano paper con alta betweenness, procedo dunque a fare un faceting per veder meglio la distinzione.
+
+### Grafico 4 : Facet per categoria
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+p_facet <- ggplot(df_active, aes(x = pagerank * 10000, 
+                                  y = betweenness, 
+                                  color = tipo,
+                                  shape = tipo)) +
+  geom_point(alpha = 0.7, size = 3) +
+  
+  scale_color_manual(values = c("Specializzato" = "#EF476F", 
+                                 "Interdisciplinare" = "#06D6A0"),
+                     name = "") +
+  
+  scale_shape_manual(values = c("Specializzato" = 16, "Interdisciplinare" = 4),
+                     name = "") +
+  
+  facet_wrap(~ category, scales = "free", ncol = 3) +
+  
+  labs(title = "Paper Interdisciplinari per Categoria",
+       subtitle = "✕ = Interdisciplinare | ● = Specializzato",
+       x = "PageRank (×10000)",
+       y = "Betweenness") +
+  
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold", size = 16),
+        strip.text = element_text(face = "bold", size = 10),
+        legend.position = "top")
+
+print(p_facet)
+
+```
+
+I paper interdisciplinari (alto Rao da out-degree) sono più influenti (alto in-degree/PageRank) ?
+
+  - Se intendiamo influenza come PageRank/In-degree allora no, infatti gli specializzati sono PIÙ citati (+28% PageRank).
+
+  - Se intendiamo invece la Betweeness allora si, gli interdisciplinari hanno +1019% Betweenness.
+    Sono i ponti che connettono discipline diverse, hanno un ruolo importante per la circolazione delle idee.
+    
+
+## Domanda 11 : Quali categorie producono i paper più interdisciplinari ? E quali beneficiano di più dai ponti interdisciplinari?
+
+Considero qui un paper interdisciplinare se cita al di fuori della propria categoria.
+
+Considero invece altri paper che beneficiano da ponti come citati da paper di categoria diversa.
+
+Analisi : 
+
+Tabella : Rao medio per categoria 
+
+Grafico : % Paper Interdisciplinari per Categoria
+
+Tabella : Top Coppie di categorie per numero di citazioni (paper 1 cita paper 2 tot volte)
+
+Tabella : Bilanciamento ottenuto dall'interdisciplinarità delle categorie
+
+### Interdisciplinarità per Categoria
+
+Rao medio per categoria 
+
+```{r}
+
+# Solo paper con citazioni out
+df_active <- df_analysis[df_analysis$degree_out > 0, ]
+
+# Aggrego per categoria
+category_stats <- df_active %>%
+  group_by(category) %>%
+  summarise(
+    n_papers = n(),
+    rao_medio = mean(rao_entropy),
+    perc_interdisciplinari = sum(rao_entropy > 0) / n() * 100,
+    # Rao medio solamnte tra interdisciplinari
+    rao_medio_inter = mean(rao_entropy[rao_entropy > 0]),
+    betweenness_medio = mean(betweenness)
+  ) %>%
+  arrange(desc(rao_medio))
+
+print(category_stats,
+            digits = c(0, 0, 4, 1, 4, 1),
+            col.names = c("Categoria", "N Paper", "Rao Medio (tutti)", 
+                         "% Interdisciplinari", "Rao Medio (inter)", "Betweenness Medio"))
+
+```
+Dunque la categoria che produce i paper più interdisciplinari è Theory. 
+
+Infatti la percentuale di paper interdisciplinari è di circa il 30%, maggiore di tutti gli altri.
+
+### Paper Interdisciplinari per Categoria
+
+Spiego qui con un grafico i dati appena ottenuti nella tabella preedente. 
+
+```{r}
+
+# Barplot con % interdisciplinari
+p_categories <- ggplot(category_stats, 
+                       aes(x = reorder(category, perc_interdisciplinari), 
+                           y = perc_interdisciplinari,
+                           fill = perc_interdisciplinari)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  geom_text(aes(label = paste0(round(perc_interdisciplinari, 1), "%")),
+            hjust = -0.2, size = 4.5, fontface = "bold") +
+  scale_fill_gradient(low = "#EF476F", high = "#06D6A0",
+                      name = "% Interdisciplinari") +
+  coord_flip() +
+  labs(title = "Apertura Disciplinare: % Paper Interdisciplinari per Categoria",
+       subtitle = "Alcune discipline integrano più conoscenza esterna di altre",
+       x = "",
+       y = "% Paper Interdisciplinari (Rao > 0)") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold", size = 16),
+        plot.subtitle = element_text(size = 11, color = "gray40"),
+        legend.position = "none") +
+  ylim(0, max(category_stats$perc_interdisciplinari) * 1.15)
+
+print(p_categories)
+
+```
+
+
+### Top Coppie di categorie per numero di citazioni (paper 1 cita paper 2 tot volte)
+
+Vediamo i Top 10 flussi di citazioni cross-categoria (from != to).
+
+Nota che svolgo l'analisi solo per i paper interdisciplinari (che son 300).
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Filtro solo paper interdisciplinari
+interdisciplinary_papers <- df_active[df_active$rao_entropy > 0, ]
+
+# cat("Analisi su", nrow(interdisciplinary_papers), "paper interdisciplinari\n\n")
+
+# Per ogni paper interdisciplinare, guardo chi cita
+cross_citations <- data.frame()
+
+for (i in 1:nrow(interdisciplinary_papers)) {
+  paper_idx <- which(V(graph)$name == interdisciplinary_papers$paper[i])
+  cited_indices <- which(A[paper_idx, ] > 0)
+  
+  if (length(cited_indices) > 0) {
+    source_cat <- interdisciplinary_papers$category[i]
+    target_cats <- node_categories[cited_indices]
+    
+    # solo citazioni cross-category (from != to)
+    for (target_cat in unique(target_cats)) {
+      if (source_cat != target_cat) {  # ← FILTRO AGGIUNTO
+        n_cit <- sum(target_cats == target_cat)
+        cross_citations <- rbind(cross_citations, 
+                                 data.frame(from = source_cat,
+                                           to = target_cat,
+                                           weight = n_cit))
+      }
+    }
+  }
+}
+
+# Aggrego
+cross_summary <- cross_citations %>%
+  group_by(from, to) %>%
+  summarise(total_citations = sum(weight)) %>%
+  arrange(desc(total_citations))
+
+print(head(cross_summary, 20),
+            col.names = c("Da Categoria", "A Categoria", "N Citazioni"))
+
+```
+
+Vediamo nella tabella come la categoria Neural_Networks sia la più citata da una stessa categoria, che è Theory.
+
+
+Statistiche citazioni cross-categoria
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+cat("  Totale citazioni cross:", sum(cross_summary$total_citations), "\n")
+cat("  Numero di coppie (from→to):", nrow(cross_summary), "\n")
+cat("  Media citazioni per coppia:", round(mean(cross_summary$total_citations), 1), "\n\n")
+
+```
+
+### Chi è il maggior ESPORTATORE vs IMPORTATORE?
+
+L'interpretazione è che : 
+
+  - balance POSITIVO: categoria 'esporta' più idee verso altre discipline
+  
+  - balance NEGATIVO: categoria 'importa' più idee da altre discipline
+
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Calcola out-flow (quanto esporta) e in-flow (quanto importa)
+export_summary <- cross_summary %>%
+  group_by(from) %>%
+  summarise(citazioni_out = sum(total_citations)) %>%
+  rename(category = from)
+
+import_summary <- cross_summary %>%
+  group_by(to) %>%
+  summarise(citazioni_in = sum(total_citations)) %>%
+  rename(category = to)
+
+trade_balance <- merge(export_summary, import_summary, by = "category", all = TRUE)
+trade_balance[is.na(trade_balance)] <- 0
+trade_balance$balance <- trade_balance$citazioni_out - trade_balance$citazioni_in
+trade_balance <- trade_balance %>% arrange(desc(balance))
+
+trade_balance_print <- trade_balance
+num_cols <- c("citazioni_out", "citazioni_in", "balance")
+trade_balance_print[num_cols] <- lapply(trade_balance_print[num_cols], round, 0)
+
+print(trade_balance_print, row.names = FALSE)
+
+
+```
+
+- Ne concludo che la categoria :
+    
+  - Più aperta è la Theory ( 30.9 % interdisciplinari )
+  
+  - Più chiusa è la Genetic_Algorithms ( 10.6 % interdisciplinari )
+
+- Flusso principale: Theory → Neural_Networks ( 82 citazioni)
+
+   - Totale citazioni cross-disciplinari: 874 
+
+- Maggior esportatore in proporzione 
+
+   - quella che cita maggiormente in proporzione : Theory (bilancia + 72 )
+   - quella che viene citata maggiormente in proporzione : Case_Based (bilancia -43 )
+
+
+Le discipline non sono ugualmente 'aperte'. 
+Alcune (come Theory) integrano attivamente conoscenza da altri campi.
+Altre invece (come Genetic_Algorithms) rimangono più isolate. 
+
+
+## Domanda 12 : Le communities coincidono con le categorie scientifiche ?
+
+Filtro dapprima i nodi così da lavorare su un insieme di nodi minore dell'originale, il quale è troppo sparso.
+
+Settp una soglia minima di 5 come grado totale (in degree + out degree del nodo).
+
+```{r}
+
+# Calcolo del degree totale (in + out)
+total_degree <- V(graph)$indegree + V(graph)$outdegree
+
+# Soglia minima
+min_degree <- 5
+
+# Identifichiamo i nodi da mantenere
+keep_nodes <- which(total_degree >= min_degree)
+
+cat("Filtro soglia :", min_degree, "\n")
+cat("  Nodi mantenuti:", length(keep_nodes), 
+    paste0("(", round(length(keep_nodes) / vcount(graph) * 100, 1), "%)"), "\n")
+cat("  Nodi rimossi:", vcount(graph) - length(keep_nodes), 
+    paste0("(", round((vcount(graph) - length(keep_nodes)) / vcount(graph) * 100, 1), "%)"), "\n\n")
+
+# Creo il sottografo filtrato
+graph_filtered <- induced_subgraph(graph, keep_nodes)
+
+cat("Sottografo filtrato:\n")
+cat("  Nodi:", vcount(graph_filtered), "\n")
+cat("  Archi:", ecount(graph_filtered), "\n")
+cat("  Densità:", round(ecount(graph_filtered) / (vcount(graph_filtered) * (vcount(graph_filtered) - 1) / 2), 4), "\n\n")
+
+```
+
+### Community Detection Algorithms sulla rete che ottimizzano la Modularità
+
+Abbiamo dunque filtrato il grafo, il quale è ancora un grafo diretto non pesato.
+
+Serve ora far collassare gli archi bidirezionali, ossia convertiamo il grafo.
+
+Passiamo da uno diretto a non diretto.
+
+```{r}
+
+# Converto in non-diretto
+graph_filtered <- as_undirected(graph_filtered, mode = "collapse")
+
+
+cat("Grafo convertito:\n")
+cat("  Nodi:", vcount(graph_filtered), "\n")
+cat("  Archi:", ecount(graph_filtered), "\n")
+cat("  Densità:", round(ecount(graph_filtered) / (vcount(graph_filtered) * (vcount(graph_filtered) - 1) / 2), 4), "\n")
+cat("  Diretto:", is_directed(graph_filtered), "\n\n")
+
+```
+
+Nota che ora ho 77 archi in meno, questo perchè in aluni casi avevo una coppia di nodi che si citavano a vicenda.
+
+
+Questi sono gli Heuristic Algorithm che analizzeremo :
+
+```{r}
+methods <- list(
+  "Edge Betweenness" = cluster_edge_betweenness,
+  "Fast Greedy" = cluster_fast_greedy,
+  "Label Propagation" = cluster_label_prop,
+  "Leading Eigenvector" = cluster_leading_eigen,
+  "Louvain" = cluster_louvain,
+  "Walktrap" = cluster_walktrap,
+  "Infomap" = cluster_infomap
+)
+```
+
+Creo ora iun dataframe per contenere i risultati dell'applicazione di essi alla rete.
+
+```{r}
+# Dataframe per i risultati
+results <- data.frame(
+  Method = character(), 
+  Communities = integer(),
+  Modularity = numeric(), 
+  Time_seconds = numeric(),
+  stringsAsFactors = FALSE
+)
+```
+
+Questo ciclo scorre ogni elemento della lista methods, procede poi con l'applicazione di esso ed al salvataggio dei risultati.
+
+```{r}
+# Eseguo ogni algoritmo
+for (method in names(methods)) {
+  cat("  -", method, "... ")
+  
+  tryCatch({
+    # Misuro il tempo di esecuzione
+    start_time <- Sys.time()
+    
+    # Detect communities
+    set.seed(42)  # Per riproducibilità
+    communities <- methods[[method]](graph_filtered)
+    
+    end_time <- Sys.time()
+    time_taken <- as.numeric(difftime(end_time, start_time, units = "secs"))
+    
+    # Calcolo della modularity
+    modularity_value <- modularity(communities)
+    n_communities <- length(communities)
+    
+    # Salvo i risultati
+    results <- rbind(results, data.frame(
+      Method = method, 
+      Communities = n_communities,
+      Modularity = modularity_value,
+      Time_seconds = time_taken
+    ))
+    
+    cat("OK (Q =", round(modularity_value, 4), ")\n")
+    
+  }, error = function(e) {
+    cat("ERRORE:", e$message, "\n")
+  })
+}
+
+```
+
+Ordiniamo i risultati ottenuti per modularity decrescente e mostro i dati con una tabella.
+
+```{r}
+
+results <- results[order(-results$Modularity), ]
+
+print(results, digits = 4)   
+
+```
+Vediamo qui che Louvain massimizza la modularità trovado 34 communities (gruppi).
+
+### Louvain
+
+Ricorda che staimo lavorando sul sottografo tale che ogni nodo abbiam un total degree di almeno 5.
+
+Applico dunque Louvain sul sottografo.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+set.seed(42)
+louvain_filtered <- cluster_louvain(graph_filtered)
+
+cat("Risultati Louvain (sottografo):\n")
+cat("  Communities trovate:", length(louvain_filtered), "\n")
+cat("  Modularity Q:", round(modularity(louvain_filtered), 4), "\n\n")
+
+
+# Distribuzione dimensioni communities
+filtered_sizes <- sort(table(membership(louvain_filtered)), decreasing = TRUE)
+
+cat("Distribuzione dimensioni communities:\n")
+print(filtered_sizes)
+cat("\n")
+
+cat("Statistiche:\n")
+cat("  Dimensione media:", round(mean(filtered_sizes), 1), "nodi\n")
+cat("  Dimensione mediana:", median(filtered_sizes), "nodi\n")
+cat("  Community più grande:", max(filtered_sizes), "nodi\n")
+cat("  Community più piccola:", min(filtered_sizes), "nodi\n\n")
+
+# Aggiungo membership al sottografo
+V(graph_filtered)$community <- membership(louvain_filtered)
+
+```
+
+Mostro ora 2 grafi, corrispondenti al raggruppamento dei nodi fatto da Louvain e quello di confronto, ossia le categoria del paper nella Cora Network.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Plot 1
+
+# Converto il sottografo in tidygraph
+graph_tidy <- as_tbl_graph(graph_filtered) %>%
+  mutate(community = as.factor(community))
+
+
+# Layout
+set.seed(42)
+
+p <- ggraph(graph_tidy, layout = 'fr') +
+  # Archi
+  geom_edge_link(aes(), 
+                 color = "gray80", 
+                 width = 0.2, 
+                 alpha = 0.3) +
+  # Nodi
+  geom_node_point(aes(color = community), 
+                  size = 2.5, 
+                  alpha = 0.8) +
+  # Tema e stile
+  scale_color_viridis_d(option = "turbo", name = "Community") +
+  labs(title = "Louvain Community Detection (grafo filtrato)",
+       subtitle = paste0(vcount(graph_filtered), " nodi (degree ≥", min_degree, ") | ",
+                        length(louvain_filtered), " communities, Q = ", 
+                        round(modularity(louvain_filtered), 3))) +
+  theme_graph(base_family = "sans") +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 9, face = "bold"),
+        legend.text = element_text(size = 7),
+        legend.key.size = unit(0.4, "cm"),     
+        legend.box.spacing = unit(0.1, "cm"), 
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size = 11, hjust = 0.5)) +
+  guides(color = guide_legend(nrow = 2, byrow = TRUE)) 
+
+print(p)
+
+
+# Plot 2
+# Visualizzazione Ground-Truth (categorie)
+
+# Converto il sottografo in tidygraph con categorie
+graph_tidy_cat <- as_tbl_graph(graph_filtered) %>%
+  mutate(category = as.factor(category))
+
+
+# Stesso layout del primo grafico per confronto diretto
+set.seed(42)
+
+# Creo il plot con ggraph settando il colori in base alle categorie
+p_cat <- ggraph(graph_tidy_cat, layout = 'fr') +
+  geom_edge_link(aes(), 
+                 color = "gray80", 
+                 width = 0.2, 
+                 alpha = 0.3) +
+  geom_node_point(aes(color = category), 
+                  size = 2.5, 
+                  alpha = 0.8) +
+  scale_color_brewer(palette = "Set2", name = "Categoria") +
+  labs(title = "Ground-Truth Categories (grafo filtrato)",
+       subtitle = paste0(vcount(graph_filtered), " nodi (degree ≥", min_degree, ") | ",
+                        length(unique(V(graph_filtered)$category)), " categorie Cora")) +
+  theme_graph(base_family = "sans") +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.text = element_text(size = 9),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(size = 11, hjust = 0.5))
+
+print(p_cat)
+
+```
+  
+
+### Risposta a : Le communities coincidono con le categorie scientifiche  ?
+
+Abbiamo 7 Categorie vs 34 Communities trovate mediante Louvain
+
+Cerchiamo di capire quale cattura meglio la struttura della rete.
+
+L'idea è di eseguire il calcolo della modularity.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Estraggo i dati dal grafo
+communities_best <- V(graph_filtered)$community  # Membership Louvain
+categories <- V(graph_filtered)$category         # Categorie ground-truth
+
+
+# Calcolo della modularity
+modularity_res <- data.frame(
+  K = integer(),
+  Source = character(),
+  Modularity = numeric(),
+  Avg_size = numeric(),
+  Min_size = integer(),
+  Max_size = integer(),
+  stringsAsFactors = FALSE
+)
+```
+
+Ho qui 2 casi : 
+
+  1. Ground-truth (7 categorie)
+  
+  2. Louvain (communities già calcolate)
+
+```{r}
+
+# 1. Ground-truth
+
+cat_membership <- as.numeric(factor(categories))
+cat_communities <- make_clusters(graph_filtered, membership = cat_membership)
+cat_modularity <- modularity(cat_communities)
+cat_sizes <- table(cat_membership)
+
+modularity_res <- rbind(modularity_res, data.frame(
+  K = length(unique(cat_membership)),
+  Source = "Ground-Truth (Categorie)",
+  Modularity = round(cat_modularity, 4),
+  Avg_size = round(mean(cat_sizes), 1),
+  Min_size = min(cat_sizes),
+  Max_size = max(cat_sizes)
+))
+
+# 2. Louvain
+
+louv_communities <- make_clusters(graph_filtered, membership = communities_best)
+louv_modularity <- modularity(louv_communities)
+louv_sizes <- table(communities_best)
+
+modularity_res <- rbind(modularity_res, data.frame(
+  K = length(unique(communities_best)),
+  Source = "Louvain (ottimale)",
+  Modularity = round(louv_modularity, 4),
+  Avg_size = round(mean(louv_sizes), 1),
+  Min_size = min(louv_sizes),
+  Max_size = max(louv_sizes)
+))
+
+
+```
+
+Faccio infine un confronto.
+
+```{r}
+print(modularity_res, row.names = FALSE)
+
+
+mod_categories <- modularity_res$Modularity[1]
+mod_louvain <- modularity_res$Modularity[2]
+
+```
+
+Le 7 categorie della Cora network risultano esser grossolane.
+
+Louvain (k= 34) trova una struttura più modulare che cattura meglio le sotto comunità.
+
+   Modularity migliorata del 23.7 %
+
+
+Mostro qui un plot comparativo.
+
+```{r}
+p_granularity <- ggplot(modularity_res, aes(x = K, y = Modularity, color = Source)) +
+  geom_point(size = 5, alpha = 0.8) +
+  geom_line(aes(group = 1), linetype = "dashed", alpha = 0.5, color = "gray50") +
+  geom_text(aes(label = paste0("Q=", Modularity)), 
+            vjust = -1.2, size = 3.5, show.legend = FALSE) +
+  scale_color_brewer(palette = "Set1", name = NULL) +
+  labs(title = "Confronto Granularità: Categorie vs Communities",
+       subtitle = paste0(vcount(graph_filtered), " nodi"),
+       x = "Numero di cluster (k)", 
+       y = "Modularity Q") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+        plot.subtitle = element_text(size = 11, hjust = 0.5))
+
+print(p_granularity)
+```
+
+
+I risultati rivelano un disallineamento tra la categorizzazione scientifica nella Cora Nwteork e la struttura della rete (solo nodi con degree > 5):
+
+1. **Ground-truth (k=7, Q=0.641)**: 
+
+  - Le categorie scientifiche hanno una modularity moderata, la classificazione non cattura perfettamente i pattern di citazione.
+
+2. **Louvain ottimale (k=34, Q=0.793)**: 
+
+  - L'algoritmo converge a 34 communities, migliorando la modularity del 23.7%. 
+  - Questo indica l'esistenza di sottocategorie tematiche** (es. CNN o RNN all'interno di Neural Networks).
+
+
+Le 7 categorie sono macro-raggruppamenti grossolani.
+La struttura di citazione riflette specializzazioni più fini.  
+
+
+## Domanda 13 : Quali categorie sono più "pure" (una sola community o poche)?
+
+Costruiamo una tabella di frammentazione e purezza per ciascuna categoria (ground-truth) nel grafo.
+
+Lo facciamo incrociando la partizione fornita dall’algoritmo di community detection (Louvain) con la classificazione originale delle categorie. 
+
+Così da poter capire quanto le categorie sono “coese” o “frammentate” rispetto alle community trovate.
+
+
+Costruiamo una tabella di frammentazione e purezza per ciascuna categoria incrociando la partizione Louvain con la classificazione originale.
+
+```{r}
+
+# Estraggo i dati
+community_per_nodo <- V(graph_filtered)$community   
+categoria_per_nodo <- V(graph_filtered)$category    
+categories <- unique(categoria_per_nodo)
+
+# Dataframe per metriche
+fragplotdata <- data.frame(
+  Category = character(),
+  N_communities = integer(),
+  Largest_pct = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Dataframe per lo stacked bar plot
+composition_data <- data.frame(
+  Category = character(),
+  Community = integer(),
+  N_nodi = integer(),
+  Percentuale = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Per ogni categoria
+for(cat in categories) {
+  
+  # Trovo i nodi di questa categoria
+  nodes_in_cat <- which(categoria_per_nodo == cat)
+  total_nodes <- length(nodes_in_cat)
+  
+  # Quali communities?
+  communities_in_cat <- community_per_nodo[nodes_in_cat]
+  
+  # Distribuzione
+  tab <- table(communities_in_cat)
+  n_communities <- length(tab)
+  
+  # Calcolo delle metriche
+  probs <- tab / sum(tab)
+  distribution_pct <- 100 * probs
+  
+  # Purezza (% nella community dominante)
+  largest_pct <- max(distribution_pct)
+  
+  # Salvo le metriche
+  fragplotdata <- rbind(fragplotdata, data.frame(
+    Category = cat,
+    N_communities = n_communities,
+    Largest_pct = largest_pct
+  ))
+  
+  # Salvo composizione (per lo stacked bar plot)
+  for (i in 1:length(tab)) {
+    composition_data <- rbind(composition_data, data.frame(
+      Category = cat,
+      Community = as.integer(names(tab)[i]),
+      N_nodi = as.integer(tab[i]),
+      Percentuale = as.numeric(distribution_pct[i])
+    ))
+  }
+}
+
+```
+
+Plot Composizione delle categorie e purezza.
+
+```{r}
+
+# Ordino le categorie per purezza decrescente
+category_order <- fragplotdata %>% 
+  arrange(desc(Largest_pct)) %>% 
+  pull(Category)
+
+composition_data$Category <- factor(composition_data$Category, levels = category_order)
+
+# Ordino poi communities per numero totale di nodi
+community_importance <- composition_data %>%
+  group_by(Community) %>%
+  summarise(Total = sum(N_nodi)) %>%
+  arrange(desc(Total))
+
+composition_data$Community <- factor(composition_data$Community, 
+                                     levels = community_importance$Community)
+
+# Plot 1 : Stacked bar chart
+
+p_composition <- ggplot(composition_data, aes(x = Category, y = Percentuale, fill = Community)) +
+  geom_bar(stat = "identity", color = "white", size = 0.3) +
+  geom_text(data = fragplotdata %>% mutate(Category = factor(Category, levels = category_order)),
+            aes(x = Category, y = 105, label = paste0(round(Largest_pct, 1), "%"), fill = NULL),
+            size = 4, fontface = "bold", color = "black") +
+  labs(title = "Composizione delle Categorie nelle Communities Louvain",
+       subtitle = "Ogni barra = 100% dei nodi della categoria | Numero sopra = Purezza (% nella community dominante)",
+       x = NULL,
+       y = "Percentuale di nodi (%)",
+       fill = "Community") +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 110)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 15),
+    plot.subtitle = element_text(hjust = 0.5, size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y = element_text(size = 11),
+    legend.position = "right",
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 9),
+    panel.grid.major.x = element_blank()
+  ) +
+  guides(fill = guide_legend(ncol = 2, keywidth = 0.8, keyheight = 0.8))
+
+print(p_composition)
+
+```
+
+Focus solo sulla purezza per categoria. 
+
+```{r}
+
+# Plot 2 : Purezza (Lollipop chart)
+
+frag_plot_data <- fragplotdata
+frag_plot_data$Category_short <- gsub("_", "\n", frag_plot_data$Category)
+
+frag_plot_data <- frag_plot_data[order(-frag_plot_data$Largest_pct), ]
+frag_plot_data$Category_short <- factor(frag_plot_data$Category_short,
+                                        levels = frag_plot_data$Category_short)
+
+frag_plot_data$Purezza_level <- cut(frag_plot_data$Largest_pct,
+                                    breaks = c(0, 50, 70, 100),
+                                    labels = c("Bassa (<50%)",
+                                               "Media (50-70%)",
+                                               "Alta (>70%)"))
+
+p2 <- ggplot(frag_plot_data, aes(x = Category_short, y = Largest_pct,
+                                 color = Purezza_level)) +
+  geom_segment(aes(xend = Category_short, y = 0, yend = Largest_pct),
+               linewidth = 1.5) +
+  geom_point(size = 6) +
+  geom_text(aes(label = paste0(round(Largest_pct, 1), "%")),
+            vjust = -1, size = 4, color = "black", fontface = "bold") +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "red", linewidth = 0.8) +
+  annotate("text", x = 0.7, y = 53, label = "Soglia 50%",
+           color = "red", size = 3.5) +
+  scale_color_manual(values = c("Bassa (<50%)" = "#d62728",
+                                "Media (50-70%)" = "#ff7f0e",
+                                "Alta (>70%)" = "#2ca02c"),
+                     name = "Livello Purezza") +
+  coord_flip() +
+  labs(title = "Purezza delle Categorie",
+       subtitle = "% nodi nella community dominante",
+       x = NULL, y = "Purezza (%)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 15),
+        plot.subtitle = element_text(hjust = 0.5, size = 11),
+        legend.position = "bottom",
+        axis.text = element_text(size = 10))
+
+print(p2)
+
+
+```
+
+Tutte le categorie sono frammentate.
+
+
+Prendiamo ad esempio Neural Networks (la 2^a più frammentata):
+
+  - La mia idea è che non esista un unico argomento "Neural Networks" unificato, ma si divida ulteriormente in CNN, RNN, GAN, Transformers, etc.
+
+
+Reinforcement Learning (MENO frammentata):
+
+  - 81.8% dei nodi in una sola community (7)
+
+  - Ma comunque divisa in 8 communities → ancora frammentata
+
+
+## Domanda 14 : Studia i K-connected components e verifica se i gruppi con connettività più alta sono composti da soli paper di una stessa catgoria.
+
+Creo una copia del grafo e la converto in non diretto.
+
+Nota che qui per ora non restringiamo la rete rispetto a qulla orginale (come avevo fatto prima con graph_filtered).
+Lo faremo però tra poco.
+
+```{r}
+graph_undirected <- as_undirected(graph, mode = "collapse")
+
+cat("Grafo convertito:\n")
+cat("  Nodi:", vcount(graph_undirected), "\n")
+cat("  Archi:", ecount(graph_undirected), "\n")
+cat("  Densità:", round(ecount(graph_undirected) / (vcount(graph_undirected) * (vcount(graph_undirected) - 1) / 2), 4), "\n")
+cat("  Diretto:", is_directed(graph_undirected), "\n\n")
+
+```
+
+### Connected Component
+
+La componente connessa di un grafo non diretto è il set massimo di nodi tale che ogni coppia di nodi è connessa da un path.
+
+Il Giant Component riempie la maggior parte della rete.
+
+Per poter ottenere tale Connected Component, ho creato una copia del grafo ma indiretto.
+
+Lavoro qui con il grafo indiretto.
+
+```{r}
+
+# Trovo le componenti connesse
+cc <- components(graph_undirected)
+
+cat("Numero componenti connesse:", cc$no, "\n")
+cat("Giant Component:", max(cc$csize), "nodi\n")
+cat("Percentuale della Giant Component:", round(100 * max(cc$csize) / vcount(graph_undirected), 1), "%\n")
+
+# Nodi che sono nella componente gigante
+gc_nodes <- which(cc$membership == which.max(cc$csize))
+
+gc_subgraph <- induced_subgraph(graph_undirected, gc_nodes)
+
+```
+
+### K-Connected Components
+
+Adesso, come fatto prima, filtriamo per tenere solo i nodi con un grado >= 5 (perchè ho un grafo non diretto).
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Connettività del grafo
+#vertex_connectivity(gc_subgraph)
+
+# Calcolo il grado
+deg_gc <- degree(gc_subgraph)
+
+# Filtro i nodi, tengo soli quelli con grado >= 5
+keep_nodes <- which(deg_gc >= 5)
+g_filtered <- induced_subgraph(gc_subgraph, keep_nodes)
+
+# Quanti nodi rimangono
+# vcount(g_filtered)  
+
+# Quanti archi rimangono
+#ecount(g_filtered)
+
+# Calcolo i cohesive blocks su questo grafo ridotto
+b <- cohesive_blocks(g_filtered)
+print(b)
+plot_hierarchy(b)
+```
+La struttura dei cohesive blocks è fatta da 33 blocchi, con alcuni che hanno una connettività pari a massimo 4. 
+
+Mi concentro su questi blocchi. 
+
+```{r}
+
+# Nodi dai blocchi
+bn = blocks(b)
+
+# Creo una lista in cui metto 1 grafo per ciascun blocco, esso conterrà solo i nodi e gli archi relativi a quel blocco
+bg = graphs_from_cohesive_blocks(b, g_filtered)
+
+# Ottengo la coesione di ogni blocco
+coe = cohesion(b)
+
+# Trovo i blocchi con coesione massima
+max_coe <- max(coe)
+idx_max <- which(coe == max_coe)
+
+categories <- sort(unique(V(g_filtered)$category))
+n_cat <- length(categories)
+
+```
+
+Plotto ogni blocco con coesione massima 
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Rainbow
+cat_colors <- rainbow(n_cat)
+names(cat_colors) <- categories
+
+# Plotto ogni blocco con coesione massima
+par(mfrow = c(2, 4), mar = c(1, 1, 2, 1))  # 2 righe, 4 colonne per 7 grafici
+
+for (i in seq_along(idx_max)) {
+  h <- bg[[ idx_max[i] ]]
+  
+  # Assegno i colori in base alla categoria
+  V(h)$color <- cat_colors[ V(h)$category ]
+  
+  plot(
+    h,
+    vertex.size = 12,
+    vertex.label = V(h)$name,     
+    vertex.label.cex = 0.7,
+    vertex.label.color = "black",
+    vertex.frame.color = "black",
+    edge.color = "grey60",
+    edge.width = 1.5,
+    layout = layout_with_fr(h),
+    main = paste0("Blocco ", idx_max[i], " (k = ", max_coe, ")")
+  )
+}
+
+# Aggiungo la legenda
+plot.new()
+legend(
+  "center",
+  legend = categories,
+  col = cat_colors,
+  pch = 19,
+  pt.cex = 2.5,
+  cex = 1.2,
+  title = "Categorie Cora",
+  bty = "n"
+)
+```
+
+Quello mostrato è il core più robusto della rete di citazione.
+
+L'analisi si è dimostrata interessante nei blocchi 5, 32 e 33. 
+Infatti al suo interno troviamo dei paper outsider, ossia con una categoria diversa da quella di tutti gli altri.
+
+
+Provo a proseguire con questa analisi, andando a mostrare i blocchi con coesione max - 1.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Voglio ora solo i blocchi con coesione = max - 1
+target_coe <- max_coe - 1
+idx_target <- which(coe == target_coe)
+
+cat("Blocchi con coesione k =", target_coe, ":\n")
+print(idx_target)
+cat("Numero di blocchi:", length(idx_target), "\n\n")
+
+# Calcolo il numero di righe e colonne per il layout
+n_plots <- length(idx_target) + 1  
+n_cols <- 4
+n_rows <- ceiling(n_plots / n_cols)
+
+# Plotto ogni blocco con coesione
+par(mfrow = c(n_rows, n_cols), mar = c(1, 1, 2, 1))
+
+for (i in seq_along(idx_target)) {
+  h <- bg[[ idx_target[i] ]]
+  
+  V(h)$color <- cat_colors[ V(h)$category ]
+  
+  plot(
+    h,
+    vertex.size = 12,
+    vertex.label = V(h)$name,
+    vertex.label.cex = 0.7,
+    vertex.label.color = "black",
+    vertex.frame.color = "black",
+    edge.color = "grey60",
+    edge.width = 1.5,
+    layout = layout_with_fr(h),
+    main = paste0("Blocco ", idx_target[i], " (k = ", target_coe, ")")
+  )
+}
+
+# Legenda
+plot.new()
+legend(
+  "center",
+  legend = categories,
+  col = cat_colors,
+  pch = 19,
+  pt.cex = 2.5,
+  cex = 1.2,
+  title = "Categorie Cora",
+  bty = "n"
+)
+
+```
+
+
+Qui invece abbiamo che i blocchi sono quasi tutti omogenei, tranne :
+
+  * il blocco 22 e 27, che vedono entrambi la presenza di 1 paper eterogeneo (con categoria diversa da tutti gli altri).
+  
+  * il blocco 29 che risulta interessante in quanto molto eterogeneo.
+
+Analizziamo il blocco 29 più in dettaglio.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+bloc_id <- 29                 # ID del blocco
+k_bloc  <- coe[bloc_id]       # livello di coesione del blocco
+
+# Prendo il sottografo del blocco
+h_bloc <- bg[[bloc_id]]
+
+# Converto in tbl_graph per ggraph
+h_tbl <- as_tbl_graph(h_bloc)
+
+
+ggraph(h_tbl, layout = "fr") +
+  geom_edge_link(colour = "grey80", width = 0.6, alpha = 0.7) +
+  geom_node_point(aes(color = category), size = 5) +
+  geom_node_text(
+    aes(label = name),
+    color = "black",  
+    size  = 2.4
+  ) +
+  scale_color_manual(values = cat_colors, name = "Categorie Cora") +
+  ggtitle(paste0("Blocco ", bloc_id, " (k = ", k_bloc, ")")) +
+  theme_void() +
+  theme(
+    plot.title      = element_text(hjust = 0.5, face = "bold", size = 14),
+    legend.position = "left",
+    legend.title    = element_text(size = 11, face = "bold"),
+    legend.text     = element_text(size = 9)
+  )
+
+
+```
+
+
+La categoria Neural_Networks risulta esser più dispersa rispetto alle altre categorie.
+Ciò è causato da una maggioranza delle connessioni verso le altre categorie, piuttosto che intra-categoria.
+
+
+Inoltre ho che Reinforcement_Learning risulta esser denso ma allo stesso tempo importante per varie altre categorie.
+
+
+## Domanda 15 : Analizza gli SCC per verificare l'aciclicità della rete. 
+
+
+### Strongly Connected Components
+
+Nel caso di un grafo diretto, abbiamo questa nozione.
+
+2 nodi sono nello stesso Strongly Connected Components se sono a vicendnda raggiungibili mediante un directed path.
+
+Formano una partizione del set dei vertici e definiscono una relazione di equivalenza tra nodi.
+
+
+In questo caso stiamo lavorando con una citation network, la quale è una quasi aciclica.
+
+Questo è dovuto al fatto che quando un paper ne cita un altro, questo citato sarà stato per forza scritto in passato (e dunque non può ricambiare la connssione)
+
+Dunque poichè la Cora citation network è quasi aciclica, mi aspetto di non trovare SCC di grandi dimensioni.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+scc <- components(graph, mode = "strong")
+
+cat("Numero Strongly Connected Components:", scc$no, "\n")
+cat("Taglia massima SCC:", max(scc$csize), "\n")
+
+nodes_scc = which(scc$membership == which.max(scc$csize))
+
+
+
+# Tabella distribuzione SCC per dimensione
+scc_distribution <- table(scc$csize)
+scc_df <- data.frame(
+  Dimensione = as.numeric(names(scc_distribution)),
+  Numero_SCC = as.numeric(scc_distribution)
+)
+
+# Ordina per dimensione
+scc_df <- scc_df %>% arrange(desc(Dimensione))
+
+# Distribuzione SCC per dimensione
+print(scc_df)
+
+
+```
+Ho dunque un elevatissimo numero di SCC, proprio come previsto. 
+
+Inoltre è possibile osservare la distribuzione delle dimensioni degli SCC.
+
+Quasi tutti gli SCC hanno 1 solo elemento.
+
+
+Mostro ora la tabella dell' SCC massimo ordinata per PageRank decrescente.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Crea tabella con informazioni sui nodi della SCC massima
+scc_table <- data.frame(
+  node_id = V(graph)[nodes_scc]$name,
+  category = V(graph)[nodes_scc]$category,
+  pagerank = round(V(graph)[nodes_scc]$pagerank * 100, 3),
+  betweenness = round(V(graph)[nodes_scc]$betweenness, 2)
+)
+
+# Ordina per PageRank decrescente
+scc_table <- scc_table %>% arrange(desc(pagerank))
+
+print(scc_table)
+
+```
+
+Lavoro ora con il sottografo della SCC massima.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Prendo il sottografo della SCC massima
+g_scc <- induced_subgraph(graph, nodes_scc)
+
+# Palette di colori per categorie
+categories <- sort(unique(V(g_scc)$category))
+cat_colors <- rainbow(length(categories))
+names(cat_colors) <- categories
+
+V(g_scc)$color <- cat_colors[V(g_scc)$category]
+
+# Scala la dimensione dei nodi in base al PageRank
+pagerank_vals <- V(g_scc)$pagerank
+vertex_sizes <- scales::rescale(pagerank_vals, to = c(10, 30))
+
+# Plot del sottografo SCC massima
+
+plot(
+  g_scc,
+  vertex.size = vertex_sizes,
+  vertex.label = V(g_scc)$name,
+  vertex.label.cex = 0.8,
+  vertex.label.color = "black",
+  vertex.frame.color = "black",
+  edge.arrow.size = 0.5,
+  edge.color = "grey50",
+  edge.width = 2,
+  layout = layout_with_kk(g_scc),
+  main = "SCC Massima (dimensione nodo = PageRank)"
+)
+
+# Legenda
+legend(
+  "topleft",
+  legend = categories,
+  col = cat_colors,
+  pch = 19,
+  pt.cex = 2,
+  bty = "n",
+  title = "Categoria"
+)
+
+```
+
+Notare come in questo SCC ci siano dei paper che si citano a vicenda, il che risulta controintuitivo in una citation network.
+
+
+## Domanda 16 : Verifica lo Small-World Effect sul grafo non diretto.
+
+Lo Shortest Path tra 2 nodi (Geodesic Path) in un grafo è il path con il numero minore di edges.
+
+La lunghezza di tale path è detta Shortest Distance (Geodesic Distance).
+
+Lo Small-World effect mi dice che la Shortest Distance è tipicamente sorprendentemente corta. 
+
+Uso qui il grafo non diretto ottenuto in precedenza.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Distanza media tra i nodi (gradi di separazione)
+avg_dist <- mean_distance(graph_undirected)
+cat("Distanza media (gradi di separazione):", round(avg_dist, 2), "\n")
+
+# Tabella delle distanze geodetiche
+dist_table <- distance_table(graph_undirected)
+
+# Istogramma/frequenza delle distanze
+paths <- dist_table$res
+names(paths) <- as.character(1:length(paths))
+barplot(
+  paths / sum(paths),
+  xlab = "Distanza geodetica",
+  ylab = "Frequenza relativa",
+  main = "Distribuzione delle distanze tra nodi"
+)
+
+```
+In questo caso lo Small-World Effect mostra di rispettare la teoria dei 6 gradi di separazione. 
+
+
+## Domanda 17 : Verifica che la Assortativity by category sia molto alta (dato che ho tante citazioni intra-categoria)
+
+Le persone preferiscono stare con altri che sono in qualche modo simili a loro (Homophily).
+
+Ogni nodo della rete può essere assegnato ad un tipo in base al valore della caratteristica per quel nodo.
+
+La rete è Assortative se una frazione significante delle edges corre tra vertici dello stesso tipo.
+
+La Modularity è una misura della Assortativity di una rete.
+
+Posso normalizzare la Modularità andando a dividere per il massimo valore che essa può assumere.
+
+Una misura dell' assortative mixing in base ad una caratteristica scalare è la Covarianza.
+
+L'Assortativity Coefficient è la misura della normalized assortativity, definita come il Coefficiente di correlazione di Pearson.
+
+Essa misura quanto i paper della stessa categoria tendono a collegarsi tra loro.
+
+```{r}
+
+assortativity_category <- assortativity_nominal(graph_undirected, as.factor(V(graph_undirected)$category), directed = FALSE)
+cat("Assortativity by category:", assortativity_category, "\n")
+
+```
+
+(0.77): Fortissima omofilia di categoria: le citazioni avvengono molto spesso tra nodi della stessa categoria.
+
+Ma questo era facil intuirlo fin dall'inizio.
+
+
+## Domanda 18 : Verifica se l’elite delle pubblicazioni crea un “club” chiuso
+
+
+In pratica se i paper (nodi) ad alta centralità (PageRank) tendono a citare/ricevere citazioni da altri paper ugualmente centrali, o la rete di influenze è più sparsa.
+
+Se l’assortatività è positiva, allora l’elite dei paper centrali cita prevalentemente altri paper influenti, creando una sorta di “elite club” della rete della conoscenza scientifica.
+
+```{r}
+
+pr <- page_rank(graph_undirected)$vector
+edge <- as_edgelist(graph_undirected, names = FALSE)
+l <- c(edge[,1], edge[,2])
+r <- c(edge[,2], edge[,1])
+pl <- pr[l]
+prr <- pr[r]
+assortativity_pagerank <- cor(pl, prr)
+cat("Assortatività rispetto al PageRank:", assortativity_pagerank, "\n")
+
+```
+
+Non si forma un “elite club”.
+
+I paper centrali non creano una sottorete chiusa e autoreferenziale, ma sono piuttosto ponte verso molti altri paper meno centrali.
+
+Il valore è vicino a zero, quindi si tratta di una tendenza debole.
 

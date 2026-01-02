@@ -1,0 +1,703 @@
+---
+title: "Global Analysis"
+author: "Edoardo Diana"
+date: "2025-11-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Cerchiamo qui dei pattern ricorrenti nelle strutture dele networks.
+
+Essi hanno un effetto determinante su come il networked system lavora.
+
+--------------------------------------------------
+
+Indice 
+
+  1 : Connected components and Strongly Connected components
+  
+  --- Percolation (da valutare perchè secondo me poco sensata)
+
+  2 : Small-world effect (da valutare perchè secondo me poco sensata)
+  
+  3 : Power Laws
+  
+  4 : Assortativity
+  
+  Domanda A : identifica se l’elite delle pubblicazioni crea un “club” chiuso
+
+  5 : Transitivity e Transitivity coefficient
+
+  6 : Reciprocity
+  
+--------------------------------------------------
+
+
+## 0 : Carico le librerie ed il grafo salvato in precedenza
+
+```{r}
+library(igraph)
+library(ggplot2)
+library(ggraph)
+library(dplyr)
+library(tidygraph)
+library(knitr)
+```
+
+Apro il grafo salvato in precedenza
+
+```{r}
+# Percorso file salvato
+processed_dir <- "../data/processed"
+graph_file <- file.path(processed_dir, "graph_with_centralities.RData")
+
+# Carico il grafo
+if (file.exists(graph_file)) {
+  load(graph_file)
+  cat("✓ Grafo caricato con successo!\n")
+  
+  print(vertex_attr_names(graph))
+  cat("  • Nodi:", vcount(graph), "\n")
+  cat("  • Archi:", ecount(graph), "\n")
+  
+} else {
+  stop("ERRORE: File non trovato! Esegui prima il Notebook 02.")
+}
+
+```
+
+Creo una copia del grafo e la converto in non diretto
+
+```{r}
+graph_undirected <- as_undirected(graph, mode = "collapse")
+
+
+cat("Grafo convertito:\n")
+cat("  Nodi:", vcount(graph_undirected), "\n")
+cat("  Archi:", ecount(graph_undirected), "\n")
+cat("  Densità:", round(ecount(graph_undirected) / (vcount(graph_undirected) * (vcount(graph_undirected) - 1) / 2), 4), "\n")
+cat("  Diretto:", is_directed(graph_undirected), "\n\n")
+
+```
+
+## 1 : Connected Component
+
+La componente connessa di un grafo non diretto è il set massimo di nodi tale che ogni coppia di nodi è connessa da un path.
+
+Il Giant Component riempie la maggior parte della rete.
+
+Per poter ottenere tale Connected Component, ho creato una copia del grafo ma indiretto.
+
+Lavoro qui con il grafo indiretto.
+
+```{r}
+
+# Trovo le componenti connesse
+cc <- components(graph_undirected)
+
+cat("Numero componenti connesse:", cc$no, "\n")
+cat("Taglia maxima (Giant Component):", max(cc$csize), "nodi\n")
+cat("Percentuale della Giant Component:", round(100 * max(cc$csize) / vcount(graph_undirected), 1), "%\n")
+
+# Nodi che sono nella componente gigante
+gc_nodes <- which(cc$membership == which.max(cc$csize))
+
+# Calcolo il diametro sulla giant component e path relativo
+gc_subgraph <- induced_subgraph(graph_undirected, gc_nodes)
+diam <- diameter(gc_subgraph)
+d_path <- get_diameter(gc_subgraph)
+
+cat("Lunghezza del diametro della Giant Component:", diam, "\n")
+cat("Numero di nodi nel diametro:", length(d_path), "\n")
+
+```
+
+### K-Connected Components
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Connettività del grafo
+vertex_connectivity(gc_subgraph)
+
+# Calcolo il grado
+deg_gc <- degree(gc_subgraph)
+
+# Tiengo solo nodi con grado >= 5
+keep_nodes <- which(deg_gc >= 5)
+g_filtered <- induced_subgraph(gc_subgraph, keep_nodes)
+
+vcount(g_filtered)  # quanti nodi rimangono
+ecount(g_filtered)
+
+# Calcolo i cohesive blocks su questo grafo ridotto
+b <- cohesive_blocks(g_filtered)
+print(b)
+plot_hierarchy(b)
+```
+
+
+```{r}
+
+# Nodi dai blocchi
+bn = blocks(b)
+
+# Creo una lista in cui metto 1 grafo per ciascun blocco, esso conterrà solo i nodi e gli archi relativi a quel blocco
+bg = graphs_from_cohesive_blocks(b, g_filtered)
+
+# Ottengo la coesione di ogni blocco
+coe = cohesion(b)
+
+# Trova TUTTI i blocchi con coesione massima
+max_coe <- max(coe)
+idx_max <- which(coe == max_coe)
+
+categories <- sort(unique(V(g_filtered)$category))
+n_cat <- length(categories)
+
+# Opzione 1: rainbow
+cat_colors <- rainbow(n_cat)
+names(cat_colors) <- categories
+```
+
+Plotto ogni blocco con coesione massima 
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Plotta ogni blocco con coesione massima
+par(mfrow = c(2, 4), mar = c(1, 1, 2, 1))  # 2 righe, 4 colonne per 7 grafici
+
+for (i in seq_along(idx_max)) {
+  h <- bg[[ idx_max[i] ]]
+  
+  # Assegna colori in base alla categoria
+  V(h)$color <- cat_colors[ V(h)$category ]
+  
+  plot(
+    h,
+    vertex.size = 12,
+    vertex.label = V(h)$name,     # usa name se vuoi gli ID originali
+    vertex.label.cex = 0.7,
+    vertex.label.color = "black",
+    vertex.frame.color = "black",
+    edge.color = "grey60",
+    edge.width = 1.5,
+    layout = layout_with_fr(h),
+    main = paste0("Blocco ", idx_max[i], " (k = ", max_coe, ")")
+  )
+}
+
+# Aggiungi una legenda in un pannello vuoto
+plot.new()
+legend(
+  "center",
+  legend = categories,
+  col = cat_colors,
+  pch = 19,
+  pt.cex = 2.5,
+  cex = 1.2,
+  title = "Categorie Cora",
+  bty = "n"
+)
+```
+
+Quello mostrato è il core più robusto della rete di citazione
+
+
+L'idea ora è di mostrare la rete con tutti i sottogruppi.
+
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Trova tutti i blocchi con coesione = max - 1
+target_coe <- max_coe - 1
+idx_target <- which(coe == target_coe)
+
+cat("Blocchi con coesione k =", target_coe, ":\n")
+print(idx_target)
+cat("Numero di blocchi:", length(idx_target), "\n\n")
+
+# Calcola il numero di righe e colonne per il layout
+n_plots <- length(idx_target) + 1  # +1 per la legenda
+n_cols <- 4
+n_rows <- ceiling(n_plots / n_cols)
+
+# Plotta ogni blocco con coesione k = 3
+par(mfrow = c(n_rows, n_cols), mar = c(1, 1, 2, 1))
+
+for (i in seq_along(idx_target)) {
+  h <- bg[[ idx_target[i] ]]
+  
+  # Assegna colori in base alla categoria
+  V(h)$color <- cat_colors[ V(h)$category ]
+  
+  plot(
+    h,
+    vertex.size = 12,
+    vertex.label = V(h)$name,
+    vertex.label.cex = 0.7,
+    vertex.label.color = "black",
+    vertex.frame.color = "black",
+    edge.color = "grey60",
+    edge.width = 1.5,
+    layout = layout_with_fr(h),
+    main = paste0("Blocco ", idx_target[i], " (k = ", target_coe, ")")
+  )
+}
+
+# Aggiungi legenda in un pannello vuoto
+plot.new()
+legend(
+  "center",
+  legend = categories,
+  col = cat_colors,
+  pch = 19,
+  pt.cex = 2.5,
+  cex = 1.2,
+  title = "Categorie Cora",
+  bty = "n"
+)
+
+```
+
+
+### Strongly Connected Components
+
+Nel caso di un grafo diretto, abbiamo questa nozione.
+
+2 nodi sono nello stesso Strongly Connected Components se sono a vicendnda raggiungibili mediante un directed path.
+
+Formano una partizione del set dei vertici e definiscono una relazione di equivalenza tra nodi.
+
+
+In questo caso stiamo lavorando con una citation network, la quale è una quasi aciclica.
+
+Questo è dovuto al fatto che quando un paper ne cita un altro, questo citato sarà stato per forza scritto in passato (e dunque non può ricambiare la connssione)
+
+Dunque poichè la Cora citation network è quasi aciclica, mi aspetto di non trovare SCC di grandi dimensioni.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+scc <- components(graph, mode = "strong")
+
+cat("Numero Strongly Connected Components:", scc$no, "\n")
+cat("Taglia massima SCC:", max(scc$csize), "\n")
+
+nodes_scc = which(scc$membership == which.max(scc$csize))
+
+
+
+# Tabella distribuzione SCC per dimensione
+scc_distribution <- table(scc$csize)
+scc_df <- data.frame(
+  Dimensione = as.numeric(names(scc_distribution)),
+  Numero_SCC = as.numeric(scc_distribution)
+)
+
+# Ordina per dimensione
+scc_df <- scc_df %>% arrange(desc(Dimensione))
+
+# Distribuzione SCC per dimensione
+print(scc_df)
+
+
+```
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Crea tabella con informazioni sui nodi della SCC massima
+scc_table <- data.frame(
+  node_id = V(graph)[nodes_scc]$name,
+  category = V(graph)[nodes_scc]$category,
+  pagerank = round(V(graph)[nodes_scc]$pagerank * 100, 3),
+  betweenness = round(V(graph)[nodes_scc]$betweenness, 2)
+)
+
+# Ordina per PageRank decrescente
+scc_table <- scc_table %>% arrange(desc(pagerank))
+
+print(scc_table)
+
+
+```
+
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Estrai il sottografo della SCC massima
+g_scc <- induced_subgraph(graph, nodes_scc)
+
+# Palette di colori per categorie
+categories <- sort(unique(V(g_scc)$category))
+cat_colors <- rainbow(length(categories))
+names(cat_colors) <- categories
+
+# Assegna colori in base alla categoria
+V(g_scc)$color <- cat_colors[V(g_scc)$category]
+
+# Scala la dimensione dei nodi in base al PageRank
+pagerank_vals <- V(g_scc)$pagerank
+vertex_sizes <- scales::rescale(pagerank_vals, to = c(10, 30))
+
+# Plot del sottografo SCC massima
+plot(
+  g_scc,
+  vertex.size = vertex_sizes,
+  vertex.label = V(g_scc)$name,
+  vertex.label.cex = 0.8,
+  vertex.label.color = "black",
+  vertex.frame.color = "black",
+  edge.arrow.size = 0.5,
+  edge.color = "grey50",
+  edge.width = 2,
+  layout = layout_with_kk(g_scc),
+  main = "SCC Massima (dimensione nodo = PageRank)"
+)
+
+# Aggiungi legenda
+legend(
+  "topleft",
+  legend = categories,
+  col = cat_colors,
+  pch = 19,
+  pt.cex = 2,
+  bty = "n",
+  title = "Categoria"
+)
+
+```
+Notare come in questo SCC ci siano dei paper che si citano a vicenda, il che risulta leggermente controintuitivo in una citation network.
+
+## Percolation
+
+Funzione per eseguire la Percolation.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# percolation removes nodes from a graph and computes 
+# the size of the giant connected component
+# INPUT
+# g: graph to percolate
+# size: number of nodes to remove 
+# d: removal vector
+# OUTPUT
+# giant: a vector with sizes of giant components when nodes are removed
+percolate = function(g, size, d) {
+  
+  giant = vector()
+  
+  # initial size of giant component
+  c = components(g)
+  giant[1] = max(c$csize)
+  
+  # find vital nodes
+  names(d) = 1:length(d)
+  d = sort(d, decreasing=TRUE)
+  vital = as.integer(names(d[1:size]))
+  
+  # compoute size of giant component after incremental removal 
+  for (i in 1:size) {
+    c = components(delete_vertices(g, vital[1:i]))
+    giant[i+1] = max(c$csize)
+  }
+  
+  return(giant)
+  
+}
+
+```
+
+Valutiamo qui 5 strategie di rimozione dei nodi.
+
+1 Rimozione random 
+2 Rimuovo prima quelli col grado più alto
+3 Rimuovo prima quelli col PageRank più alto
+4 Rimuovo prima quelli con la Betweenness più alta
+5 Rimuovo prima quelli con la Closeness più alta
+
+```{r}
+
+# resilience
+size = vcount(graph)/2
+
+# Strategie 
+
+# random
+rand = percolate(graph, size, d = sample(V(graph), size))    
+# degree
+indeg = percolate(graph, size, d = degree(graph, mode = "in"))    
+# pagerank
+pr = percolate(graph, size, d=page_rank(graph)$vector)    
+# betweenness
+bet = percolate(graph, size, d = betweenness(graph))    
+# closeness
+clo = percolate(graph, size, d = closeness(graph))    
+
+```
+
+Plotto quanto ottenuto.
+
+```{r}
+
+plot(0:size, indeg, type = "l", col=1, 
+     xlab="Number of removed nodes", 
+     ylab="Size of giant component")
+lines(0:size, pr, col=2)
+lines(0:size, bet, col=3)
+lines(0:size, clo, col=4)
+lines(0:size, rand, col=5)
+lines(0:size, rep(vcount(graph)/2, size+1), lty=2)
+legend(x = "bottomleft", 
+       legend = c("in-deg", "pr", "btw", "clo", "rand"), lty = 1, col = 1:5)
+
+```
+
+
+
+## 2 : Small-world effect
+
+Lo Shortest Path tra 2 nodi (Geodesic Path) in un grafo è il path con il numero minore di edges.
+
+La lunghezza di tale path è detta Shortest Distance (Geodesic Distance).
+
+Lo Small-World effect mi dice che la Shortest Distance è tipicamente sorprendentemente corta. 
+
+Uso qui il grafo non diretto ottenuto in precedenza.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Distanza media tra i nodi (gradi di separazione)
+avg_dist <- mean_distance(graph_undirected)
+cat("Distanza media (gradi di separazione):", round(avg_dist, 2), "\n")
+
+# Diametro della rete (shortest path più lungo)
+diam <- diameter(graph_undirected)
+cat("Diametro (shortest path più lungo):", diam, "\n")
+
+# Cammino del diametro
+diam_path <- get_diameter(graph_undirected)
+cat("Nodi attraversati dal diametro:", V(graph_undirected)$name[diam_path], "\n")
+
+
+# Statistiche delle distanze geodetiche
+dist_table <- distance_table(graph_undirected)
+cat("Numero coppie finite:", sum(dist_table$res), "\n")
+
+
+paths <- dist_table$res
+min_dist <- min(which(paths > 0))
+max_dist <- max(which(paths > 0))
+cat("Lunghezza minima:", min_dist, "\n")
+cat("Lunghezza massima:", max_dist, "\n")
+
+
+# Istogramma/frequenza delle distanze
+paths <- dist_table$res
+names(paths) <- as.character(1:length(paths))
+barplot(
+  paths / sum(paths),
+  xlab = "Distanza geodetica",
+  ylab = "Frequenza relativa",
+  main = "Distribuzione delle distanze tra nodi"
+)
+
+
+```
+
+
+
+
+## 3 : Power Laws
+
+La quantità pk è la frazione di nodi che hanno grado k.
+
+Essa è anche la probabilità che un nodo scelto randomicamente abbia gardo k.
+
+Le varie quantità pk rappresentano la degree distribution della rete.
+
+In molti reti reali, la Degree Distrubition è asimmtrica (skewed).
+
+La Skewness misura la simmetria di una distribuzione.
+
+```{r}
+
+skewness = function(x) mean( (x - mean(x))^3 ) / sd(x)^3
+
+deg <- degree(graph_undirected)
+hist(deg, breaks = 50, main = "Degree Distribution", xlab = "Degree", ylab = "Frequency")
+
+# log-log plot
+dd <- degree_distribution(graph_undirected)
+degrees <- 1:(length(dd) - 1)
+valid <- dd[-1] > 0
+plot(
+  degrees[valid], dd[-1][valid],
+  log = "xy",
+  col = "blue", pch = 20,
+  xlab = "Degree (k)", ylab = "P(k)",
+  main = "Degree Distribution (log-log)"
+)
+
+
+cat("Skewness distribuzione:", skewness(deg), "\n")
+cat("Degree min:", min(deg), "\n")
+cat("Degree max:", max(deg), "\n")
+cat("Fraction nodes with degree 1:", mean(deg == 1), "\n")
+print(summary(deg))
+
+
+```
+
+Una skewness così alta dimostra una distribuzione fortemente asimmetrica.
+
+Infatti pochi nodi hanno grado molto alto (hub), mentre la maggior parte ha grado basso.
+
+
+## 4 : Assortativity
+
+Le persone preferiscono stare con altri che sono in qualche modo simili a loro (Homophily).
+
+Ogni nodo della rete può essere assegnato ad un tipo in base al valore della caratteristica per quel nodo.
+
+La rete è Assortative se una frazione significante delle edges corre tra vertici dello stesso tipo.
+
+La Modularity è una misura della Assortativity di una rete.
+
+Posso normalizzare la Modularità andando a dividere per il massimo valore che essa può assumere.
+
+Una misura dell' assortative mixing in base ad una caratteristica scalare è la Covarianza.
+
+L'Assortativity Coefficient è la misura della normalized assortativity, definita come il Coefficiente di correlazione di Pearson.
+
+
+### Assortativity by degree
+
+Questo coefficiente misura la tendenza dei nodi con grado simile a collegarsi tra loro. 
+
+I valori possibili vanno da -1 a +1.
+
+```{r}
+# Calcolo il grado di ciascun nodo
+d <- degree(graph_undirected)
+
+# Creo la edge list
+edge <- as_edgelist(graph_undirected, names = FALSE)
+
+# Creo due vettori: per ogni edge i gradi dei due estremi (l, r)
+l <- c(edge[,1], edge[,2])
+r <- c(edge[,2], edge[,1])
+dl <- d[l]
+dr <- d[r]
+
+# Calcolo l'assortativity, ossia pearson tra i gradi dei vertici collegati
+assortativity_degree <- cor(dl, dr)
+
+cat("Assortativity by degree (Pearson correlation):", assortativity_degree, "\n")
+
+```
+
+-0.06587087 questo valore indica che la rete è tale che i nnodi con molti collegamenti tendono a collegarsi leggermente più spesso con nodi a basso grado, piuttosto che con altri hub.
+
+
+### Assortativity by categorical attribute, category
+
+Essa misura quanto i paper della stessa categoria tendono a collegarsi tra loro.
+
+```{r}
+
+assortativity_category <- assortativity_nominal(graph_undirected, as.factor(V(graph_undirected)$category), directed = FALSE)
+cat("Assortativity by category:", assortativity_category, "\n")
+
+```
+
+(0.77): Fortissima omofilia di categoria: le citazioni avvengono molto spesso tra nodi della stessa categoria.
+
+Ma questo era facil intuirlo fin dall'inizio.
+
+
+## Domanda A : identifica se l’elite delle pubblicazioni crea un “club” chiuso.
+
+In pratica se i paper (nodi) ad alta centralità (PageRank) tendono a citare/ricevere citazioni da altri paper ugualmente centrali, o la rete di influenze è più sparsa.
+
+Se l’assortatività è positiva, allora l’elite dei paper centrali cita prevalentemente altri paper influenti, creando una sorta di “elite club” della rete della conoscenza scientifica.
+
+```{r}
+
+pr <- page_rank(graph_undirected)$vector
+edge <- as_edgelist(graph_undirected, names = FALSE)
+l <- c(edge[,1], edge[,2])
+r <- c(edge[,2], edge[,1])
+pl <- pr[l]
+prr <- pr[r]
+assortativity_pagerank <- cor(pl, prr)
+cat("Assortatività rispetto al PageRank:", assortativity_pagerank, "\n")
+
+```
+Non si forma un “elite club”.
+
+I paper centrali non creano una sottorete chiusa e autoreferenziale, ma sono piuttosto ponte verso molti altri paper meno centrali.
+
+Il valore è vicino a zero, quindi si tratta di una tendenza debole.
+
+
+## 5 : Transitivity e Transitivity coefficient
+
+Indica quanto la edge relation è transitiva (se x connesso a y, e y connesso a z -> x connesso a z).
+
+Tre nodi x, y e z tali che x e z sono amici di y, è una Triade centrata in y.
+
+Essa è detta aperta se manca il legame tra x e z.
+
+Il Transitivity coefficient per una rete corrisponde alla frazione di triadi che sono chiuse.
+
+Ossia la probabilità media che 2 persone con un amico in comune siano a loro volta amici.
+
+L'idea è di calcolare il Transitivity Coefficient sul grafo non diretto.
+
+Ottengo il Transitivity Coefficient
+
+```{r}
+
+transitivity(graph_undirected, type = "global")
+
+```
+
+Il risultato indica che circa il 10% delle triadi sono closed.
+
+Istogramma della distribuzione locale dei clustering 
+
+L’asse X rappresenta il valore del clustering locale di ciascun nodo, cioè la frazione di possibili triangoli localmente chiusi per quel nodo.
+
+```{r}
+
+transitivity(graph_undirected, type = "average")
+
+clust_loc <- transitivity(graph_undirected, type="local")
+
+hist(clust_loc, breaks=30, main="Distribuzione clustering locale", xlab="Clustering coeff. locale")
+
+```
+
+In media, ogni nodo ha un clustering locale del 29%: cioè quasi un terzo dei possibili triangoli centrati su ciascun nodo risultano effettivamente chiusi.
+
+Il fatto che il valore sia più alto del globale indica che ci sono nodi (o comunità locali) in cui il clustering è particolarmente elevato (i “grappoli” o zone di forte collaborazione reciproca).
+
+
+Il grafico mostra che la maggioranza dei nodi ha clustering vicino a 0 (ossia il nodo non ha triangoli chiusi tra i suoi vicini).
+
+Esistono però anche molti nodi con clustering locale esattamente 1 (cioè piccoli gruppi chiusi, come coautori che si autocitano spesso oppure community molto coese).
+
+La distribuzione è sparsa, ci sono nodi con clustering locale intermedio, segno della presenza di sottostrutture locali e micro-comunità.
+
+
+## 6 : Reciprocity
+
+E' una misura di quanto è probabile che un nodo verso cui ho un arco uscente, ne abbia a sua volta uno verso di me.
+
+Posso computarla usando la traccia del quadrato della matrice di adiacenza del grafo.
+
+Il problema è che le reti acicliche come quella che abbiamo qui son caratterizzate dal fatto che tecnicamente 2 paper non potrbbero citarsi a vicenda.
+
+Se nel mio articolo ne cito un altro, esso sarà sicuramente uscito prima del mio e dunque non può ricambiare la citazione.
