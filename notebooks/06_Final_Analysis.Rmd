@@ -149,7 +149,8 @@ category_table <- content_nodes %>%
 print(category_table)
 
 ```
-Vngono mostrati i numeri nella tabella sopra riportata.
+
+Vengono mostrati i numeri nella tabella sopra riportata.
 
 ## Domanda 2 : Qual è la distribuzione del numero di citazioni fatte dai paper ?
 

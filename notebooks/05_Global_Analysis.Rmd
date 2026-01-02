@@ -18,8 +18,10 @@ Essi hanno un effetto determinante su come il networked system lavora.
 Indice 
 
   1 : Connected components and Strongly Connected components
+  
+  --- Percolation (da valutare perchè secondo me poco sensata)
 
-  2 : Small-world effect
+  2 : Small-world effect (da valutare perchè secondo me poco sensata)
   
   3 : Power Laws
   
@@ -97,8 +99,8 @@ Lavoro qui con il grafo indiretto.
 cc <- components(graph_undirected)
 
 cat("Numero componenti connesse:", cc$no, "\n")
-cat("Dimensione del Giant Component):", max(cc$csize), "nodi\n")
-cat("Percentuale Giant Component:", round(100 * max(cc$csize) / vcount(graph_undirected), 1), "%\n")
+cat("Taglia maxima (Giant Component):", max(cc$csize), "nodi\n")
+cat("Percentuale della Giant Component:", round(100 * max(cc$csize) / vcount(graph_undirected), 1), "%\n")
 
 # Nodi che sono nella componente gigante
 gc_nodes <- which(cc$membership == which.max(cc$csize))
@@ -113,44 +115,150 @@ cat("Numero di nodi nel diametro:", length(d_path), "\n")
 
 ```
 
-Plot della Giant Connected Component
+### K-Connected Components
 
 ```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
 
-# Impostazioni colore/forma nodi e archi
-vcol <- rep("white", vcount(gc_subgraph))
-vborder <- rep("black", vcount(gc_subgraph))
-vcol[d_path] <- "orange"
-vborder[d_path] <- "red"
+# Connettività del grafo
+vertex_connectivity(gc_subgraph)
 
-# Edges del diametro
-edges_in_path <- cbind(head(d_path, -1), tail(d_path, -1))
-diam_eids <- sapply(1:nrow(edges_in_path), function(i) {
-  get.edge.ids(gc_subgraph, vp = c(edges_in_path[i,1], edges_in_path[i,2]), directed = FALSE, error = FALSE)
-})
+# Calcolo il grado
+deg_gc <- degree(gc_subgraph)
 
-ecol <- rep("grey80", ecount(gc_subgraph))
-ecol[diam_eids] <- "red"
+# Tiengo solo nodi con grado >= 5
+keep_nodes <- which(deg_gc >= 5)
+g_filtered <- induced_subgraph(gc_subgraph, keep_nodes)
 
-ewidth <- rep(0.7, ecount(gc_subgraph))
-ewidth[diam_eids] <- 2.8
+vcount(g_filtered)  # quanti nodi rimangono
+ecount(g_filtered)
 
-coords <- layout_with_drl(gc_subgraph)
+# Calcolo i cohesive blocks su questo grafo ridotto
+b <- cohesive_blocks(g_filtered)
+print(b)
+plot_hierarchy(b)
+```
 
-plot(
-  gc_subgraph,
-  layout = coords,
-  vertex.size = 3,
-  vertex.label = NA,
-  vertex.color = vcol,
-  vertex.frame.color = vborder,
-  edge.color = ecol,
-  edge.width = ewidth,
-  main = "Giant Connected Component (diameter path in red)"
+
+```{r}
+
+# Nodi dai blocchi
+bn = blocks(b)
+
+# Creo una lista in cui metto 1 grafo per ciascun blocco, esso conterrà solo i nodi e gli archi relativi a quel blocco
+bg = graphs_from_cohesive_blocks(b, g_filtered)
+
+# Ottengo la coesione di ogni blocco
+coe = cohesion(b)
+
+# Trova TUTTI i blocchi con coesione massima
+max_coe <- max(coe)
+idx_max <- which(coe == max_coe)
+
+categories <- sort(unique(V(g_filtered)$category))
+n_cat <- length(categories)
+
+# Opzione 1: rainbow
+cat_colors <- rainbow(n_cat)
+names(cat_colors) <- categories
+```
+
+Plotto ogni blocco con coesione massima 
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Plotta ogni blocco con coesione massima
+par(mfrow = c(2, 4), mar = c(1, 1, 2, 1))  # 2 righe, 4 colonne per 7 grafici
+
+for (i in seq_along(idx_max)) {
+  h <- bg[[ idx_max[i] ]]
+  
+  # Assegna colori in base alla categoria
+  V(h)$color <- cat_colors[ V(h)$category ]
+  
+  plot(
+    h,
+    vertex.size = 12,
+    vertex.label = V(h)$name,     # usa name se vuoi gli ID originali
+    vertex.label.cex = 0.7,
+    vertex.label.color = "black",
+    vertex.frame.color = "black",
+    edge.color = "grey60",
+    edge.width = 1.5,
+    layout = layout_with_fr(h),
+    main = paste0("Blocco ", idx_max[i], " (k = ", max_coe, ")")
+  )
+}
+
+# Aggiungi una legenda in un pannello vuoto
+plot.new()
+legend(
+  "center",
+  legend = categories,
+  col = cat_colors,
+  pch = 19,
+  pt.cex = 2.5,
+  cex = 1.2,
+  title = "Categorie Cora",
+  bty = "n"
 )
+```
+
+Quello mostrato è il core più robusto della rete di citazione
 
 
-cat("Nodi lungo il diametro:\n", V(gc_subgraph)$name[d_path], "\n")
+L'idea ora è di mostrare la rete con tutti i sottogruppi.
+
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Trova tutti i blocchi con coesione = max - 1
+target_coe <- max_coe - 1
+idx_target <- which(coe == target_coe)
+
+cat("Blocchi con coesione k =", target_coe, ":\n")
+print(idx_target)
+cat("Numero di blocchi:", length(idx_target), "\n\n")
+
+# Calcola il numero di righe e colonne per il layout
+n_plots <- length(idx_target) + 1  # +1 per la legenda
+n_cols <- 4
+n_rows <- ceiling(n_plots / n_cols)
+
+# Plotta ogni blocco con coesione k = 3
+par(mfrow = c(n_rows, n_cols), mar = c(1, 1, 2, 1))
+
+for (i in seq_along(idx_target)) {
+  h <- bg[[ idx_target[i] ]]
+  
+  # Assegna colori in base alla categoria
+  V(h)$color <- cat_colors[ V(h)$category ]
+  
+  plot(
+    h,
+    vertex.size = 12,
+    vertex.label = V(h)$name,
+    vertex.label.cex = 0.7,
+    vertex.label.color = "black",
+    vertex.frame.color = "black",
+    edge.color = "grey60",
+    edge.width = 1.5,
+    layout = layout_with_fr(h),
+    main = paste0("Blocco ", idx_target[i], " (k = ", target_coe, ")")
+  )
+}
+
+# Aggiungi legenda in un pannello vuoto
+plot.new()
+legend(
+  "center",
+  legend = categories,
+  col = cat_colors,
+  pch = 19,
+  pt.cex = 2.5,
+  cex = 1.2,
+  title = "Categorie Cora",
+  bty = "n"
+)
 
 ```
 
@@ -177,7 +285,176 @@ scc <- components(graph, mode = "strong")
 cat("Numero Strongly Connected Components:", scc$no, "\n")
 cat("Taglia massima SCC:", max(scc$csize), "\n")
 
+nodes_scc = which(scc$membership == which.max(scc$csize))
+
+
+
+# Tabella distribuzione SCC per dimensione
+scc_distribution <- table(scc$csize)
+scc_df <- data.frame(
+  Dimensione = as.numeric(names(scc_distribution)),
+  Numero_SCC = as.numeric(scc_distribution)
+)
+
+# Ordina per dimensione
+scc_df <- scc_df %>% arrange(desc(Dimensione))
+
+# Distribuzione SCC per dimensione
+print(scc_df)
+
+
 ```
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Crea tabella con informazioni sui nodi della SCC massima
+scc_table <- data.frame(
+  node_id = V(graph)[nodes_scc]$name,
+  category = V(graph)[nodes_scc]$category,
+  pagerank = round(V(graph)[nodes_scc]$pagerank * 100, 3),
+  betweenness = round(V(graph)[nodes_scc]$betweenness, 2)
+)
+
+# Ordina per PageRank decrescente
+scc_table <- scc_table %>% arrange(desc(pagerank))
+
+print(scc_table)
+
+
+```
+
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# Estrai il sottografo della SCC massima
+g_scc <- induced_subgraph(graph, nodes_scc)
+
+# Palette di colori per categorie
+categories <- sort(unique(V(g_scc)$category))
+cat_colors <- rainbow(length(categories))
+names(cat_colors) <- categories
+
+# Assegna colori in base alla categoria
+V(g_scc)$color <- cat_colors[V(g_scc)$category]
+
+# Scala la dimensione dei nodi in base al PageRank
+pagerank_vals <- V(g_scc)$pagerank
+vertex_sizes <- scales::rescale(pagerank_vals, to = c(10, 30))
+
+# Plot del sottografo SCC massima
+plot(
+  g_scc,
+  vertex.size = vertex_sizes,
+  vertex.label = V(g_scc)$name,
+  vertex.label.cex = 0.8,
+  vertex.label.color = "black",
+  vertex.frame.color = "black",
+  edge.arrow.size = 0.5,
+  edge.color = "grey50",
+  edge.width = 2,
+  layout = layout_with_kk(g_scc),
+  main = "SCC Massima (dimensione nodo = PageRank)"
+)
+
+# Aggiungi legenda
+legend(
+  "topleft",
+  legend = categories,
+  col = cat_colors,
+  pch = 19,
+  pt.cex = 2,
+  bty = "n",
+  title = "Categoria"
+)
+
+```
+Notare come in questo SCC ci siano dei paper che si citano a vicenda, il che risulta leggermente controintuitivo in una citation network.
+
+## Percolation
+
+Funzione per eseguire la Percolation.
+
+```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
+
+# percolation removes nodes from a graph and computes 
+# the size of the giant connected component
+# INPUT
+# g: graph to percolate
+# size: number of nodes to remove 
+# d: removal vector
+# OUTPUT
+# giant: a vector with sizes of giant components when nodes are removed
+percolate = function(g, size, d) {
+  
+  giant = vector()
+  
+  # initial size of giant component
+  c = components(g)
+  giant[1] = max(c$csize)
+  
+  # find vital nodes
+  names(d) = 1:length(d)
+  d = sort(d, decreasing=TRUE)
+  vital = as.integer(names(d[1:size]))
+  
+  # compoute size of giant component after incremental removal 
+  for (i in 1:size) {
+    c = components(delete_vertices(g, vital[1:i]))
+    giant[i+1] = max(c$csize)
+  }
+  
+  return(giant)
+  
+}
+
+```
+
+Valutiamo qui 5 strategie di rimozione dei nodi.
+
+1 Rimozione random 
+2 Rimuovo prima quelli col grado più alto
+3 Rimuovo prima quelli col PageRank più alto
+4 Rimuovo prima quelli con la Betweenness più alta
+5 Rimuovo prima quelli con la Closeness più alta
+
+```{r}
+
+# resilience
+size = vcount(graph)/2
+
+# Strategie 
+
+# random
+rand = percolate(graph, size, d = sample(V(graph), size))    
+# degree
+indeg = percolate(graph, size, d = degree(graph, mode = "in"))    
+# pagerank
+pr = percolate(graph, size, d=page_rank(graph)$vector)    
+# betweenness
+bet = percolate(graph, size, d = betweenness(graph))    
+# closeness
+clo = percolate(graph, size, d = closeness(graph))    
+
+```
+
+Plotto quanto ottenuto.
+
+```{r}
+
+plot(0:size, indeg, type = "l", col=1, 
+     xlab="Number of removed nodes", 
+     ylab="Size of giant component")
+lines(0:size, pr, col=2)
+lines(0:size, bet, col=3)
+lines(0:size, clo, col=4)
+lines(0:size, rand, col=5)
+lines(0:size, rep(vcount(graph)/2, size+1), lty=2)
+legend(x = "bottomleft", 
+       legend = c("in-deg", "pr", "btw", "clo", "rand"), lty = 1, col = 1:5)
+
+```
+
+
 
 ## 2 : Small-world effect
 
@@ -230,13 +507,6 @@ barplot(
 ```
 
 
-
-
-```{r fig.width=12, fig.height=9, fig.align='center', warning=FALSE}
-
-distance_table(graph_undirected)
-
-```
 
 
 ## 3 : Power Laws
