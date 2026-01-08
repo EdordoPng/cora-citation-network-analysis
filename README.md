@@ -52,11 +52,12 @@ Il progetto è organizzato in script in "R" e in notebook "R Markdown" che guida
 
 ## Come iniziare
 
-1. Clona o scarica il repository su una cartella locale.  
-2. Apri il file `cora-citation-network-analysis.Rproj` con RStudio per lavorare con la working directory corretta.​
-3. Chiamare dal terminale di RStudio `../scripts/01_download_data.R` per scaricare la Cora citation Network nella cartella `data/raw/`
-4. Apri il file `notebooks/06_Network_Analysis.Rmd`.
-5. Visionare il contenuto del file 
+1. Clona o scarica il repository su una cartella locale.
+2. Apri RStudio, a sinistra nella barra in alto seleziona File -> Open Project
+3. Apri il progetto `cora-citation-network-analysis.Rproj` per lavorare con la working directory corretta.​
+4. Esegui questo `source("scripts/01_download_data.R")` sulla console di RStudio per scaricare la Cora citation Network nella cartella `data/raw/`
+5. Apri il file `notebooks/06_Network_Analysis.Rmd`.
+6. Visionare il contenuto del file 
 
 ---
 
