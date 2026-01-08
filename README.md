@@ -4,7 +4,8 @@
 Questo repository contiene una Network Analysis completa della Cora Citation Network. 
 
 
-Il dataset Cora consiste in articoli accademici di Machine Learning. Questi articoli sono classificati in una delle seguenti sette diverse categorie :
+Il dataset Cora consiste in articoli accademici di Machine Learning. 
+Questi articoli sono classificati in una delle seguenti sette diverse categorie :
 
     Case_Based
 	Genetic_Algorithms
@@ -16,13 +17,13 @@ Il dataset Cora consiste in articoli accademici di Machine Learning. Questi arti
 
 Il file .content contiene le descrizioni degli articoli nel seguente formato:
 
-  <paper_id> <word_attributes>+ <class_label>
+  	<paper_id> <word_attributes>+ <class_label>
 
 La prima voce di ogni riga contiene l'ID stringa univoco dell'articolo, seguito da valori binari che indicano se ogni parola del vocabolario è presente (indicata da 1) o assente (indicata da 0) nell'articolo. Infine, l'ultima voce della riga contiene l'etichetta della classe dell'articolo.
 
 Il file .cites contiene il grafo delle citazioni del corpus. Ogni riga descrive un collegamento nel seguente formato
 
-  <ID of cited paper> <ID of citing paper>
+ 	 <ID of cited paper> <ID of citing paper>
 
 Ogni riga contiene due ID di articoli. 
 La prima voce è l'ID dell'articolo citato e il secondo ID rappresenta l'articolo che contiene la citazione. 
