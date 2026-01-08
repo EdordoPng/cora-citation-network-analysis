@@ -1,4 +1,4 @@
-# cora-citation-network-analysis
+# Cora Citation Network Analysis
 
 ## Panoramica del progetto
 Questo repository contiene una Network Analysis completa della Cora Citation Network. 
@@ -55,7 +55,7 @@ Il progetto è organizzato in script in "R" e in notebook "R Markdown" che guida
 1. Clona o scarica il repository su una cartella locale.  
 2. Apri il file `cora-citation-network-analysis.Rproj` con RStudio per lavorare con la working directory corretta.​
 3. Chiamare dal terminale di RStudio `../scripts/01_download_data.R` per scaricare la Cora citation Network nella cartella `data/raw/`
-4. Apri il file `06_Network_Analysis.Rmd`.
+4. Apri il file `notebooks/06_Network_Analysis.Rmd`.
 5. Visionare il contenuto del file 
 
 ---
