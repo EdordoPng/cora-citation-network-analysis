@@ -24,10 +24,10 @@ L'altra voce della riga contiene l'etichetta della categoria dell'articolo.
 
 Il file .cites contiene il grafo delle citazioni. Ogni riga descrive un collegamento nel seguente formato
 
- 	 <ID of cited paper> <ID of citing paper>
+ 	 <ID of citing paper> <ID of cited paper> 
 
-Ogni riga contiene due ID di paper. 
-La prima voce è l'ID del paper citato e il secondo ID rappresenta il paper che contiene la citazione. 
+Ogni riga contiene due ID di paper.  
+La prima voce è l'ID del paper citante e il secondo ID rappresenta il paper citato. 
 
 Il progetto è organizzato in script in "R" e in notebook "R Markdown" che guidano l’utente passo per passo dall’installazione dei dati fino alle analisi di centralità, similarità e struttura globale della rete.
 
