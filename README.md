@@ -7,12 +7,12 @@ Questo repository contiene una Network Analysis completa della Cora Citation Net
 Il dataset Cora consiste in articoli accademici di Machine Learning. Questi articoli sono classificati in una delle seguenti sette diverse categorie :
 
     Case_Based
-		Genetic_Algorithms
-		Neural_Networks
-		Probabilistic_Methods
-		Reinforcement_Learning
-		Rule_Learning
-		Theory
+	Genetic_Algorithms
+	Neural_Networks
+	Probabilistic_Methods
+	Reinforcement_Learning
+	Rule_Learning
+	Theory
 
 Il file .content contiene le descrizioni degli articoli nel seguente formato:
 
