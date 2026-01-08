@@ -19,15 +19,16 @@ Il file .content contiene le descrizioni degli articoli nel seguente formato:
 
   	<paper_id> <word_attributes>+ <class_label>
 
-La prima voce di ogni riga contiene l'ID dell'paper. 
-L'altra voce della riga contiene l'etichetta della categoria dell'articolo.
+La prima voce di ogni riga contiene l'ID dell'paper.
+La prima voce di ogni riga non verrà usata in questo progetto.
+L'ultima voce della riga contiene l'etichetta della categoria dell'articolo.
 
 Il file .cites contiene il grafo delle citazioni. Ogni riga descrive un collegamento nel seguente formato
 
- 	 <ID of citing paper> <ID of cited paper> 
+ 	 <ID of cited paper> <ID of citing paper> 
 
 Ogni riga contiene due ID di paper.  
-La prima voce è l'ID del paper citante e il secondo ID rappresenta il paper citato. 
+La prima voce è l'ID del paper citato, il secondo ID rappresenta il paper citante. 
 
 Il progetto è organizzato in script in "R" e in notebook "R Markdown" che guidano l’utente passo per passo dall’installazione dei dati fino alle analisi di centralità, similarità e struttura globale della rete.
 
@@ -59,9 +60,9 @@ Il progetto è organizzato in script in "R" e in notebook "R Markdown" che guida
 
 ---
 
-### Domande di ricerca : 
+## Domande di ricerca : 
 
-  - Network quick view
+  ### Network quick view
   
   1 : Qual è il numero di paper in ogni categoria ?
 
@@ -72,7 +73,7 @@ Il progetto è organizzato in script in "R" e in notebook "R Markdown" che guida
   4.1 : Quali sono le top coppie di paper con più paper citati in comune ? (common successors)
   4.2 : Quali sono le top coppie di paper con più paper citanti in comune ? (common predecessors)
 
-  - Centrality
+  ### Centrality
 
   5 : Analizza i top paper per PageRank e scopri se tale valore è principalmente causato da : 
       
@@ -89,7 +90,7 @@ Il progetto è organizzato in script in "R" e in notebook "R Markdown" che guida
   8 : Visualizzare la rete tra categorie con la dimensione dei nodi proporzionale alla power e alla centralità, colore archi proporzionale al flusso di citazioni.
 
   
-  - Similarity ed eterogenity
+  ### Similarity ed eterogenity
 
 
   9 : I paper con alta centralità tendono ad essere interdisciplinari ?
@@ -99,7 +100,7 @@ Il progetto è organizzato in script in "R" e in notebook "R Markdown" che guida
   11 : Quali categorie producono i paper più interdisciplinari ? E quali beneficiano di più dai ponti interdisciplinari?
 
 
-  - Group Analysis
+  ### Group Analysis
 
   12 : Identifica le comunità di paper e verifica se esse coincidono con le categorie scientifiche (ground truth). 
       Se no, quale divisione in gruppi risulta esser più adatta alla rete ?  Quella iniziale (categorie) o quella trovata (communities) ? 
@@ -107,7 +108,7 @@ Il progetto è organizzato in script in "R" e in notebook "R Markdown" che guida
   13 : Quali categorie sono più pure ? (una sola community o meno possibili)
 
 
-  - Global Analysis
+  ### Global Analysis
 
   14 : Studia i K-connected components e verifica se i gruppi con connettività più alta sono composti da soli paper di una stessa catgoria.
 
